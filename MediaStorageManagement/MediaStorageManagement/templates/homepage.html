@@ -1,12 +1,22 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <title>Page Title</title>
+        <title></title>
     </head>
     <body>
 
-        <h1>This is a Heading</h1>
-        <p>This is a paragraph.</p>
+        <!-- Create container form -->
+        <form action="{% url 'homepage' %}" method="post">
+            {% csrf_token %}
+            <label>Container name:</label>
+            <input type="text" name="container_name">
+            <input type="submit" value="OK">
+        </form>
+
+        <!-- Check for result messages and print -->
+        {% if messages %}
+            {% for m in messages %}{{ m }}{% endfor %}
+        {% endif %}
 
     </body>
 </html>
