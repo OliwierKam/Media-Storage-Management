@@ -5,13 +5,30 @@
     </head>
     <body>
 
-        <!-- Create container form -->
-        <form action="{% url 'homepage' %}" method="post">
-            {% csrf_token %}
-            <label>Container name:</label>
-            <input type="text" name="container_name">
-            <input type="submit" value="OK">
-        </form>
+        <div>
+            <!-- Create container form -->
+            <form action="{% url 'homepage' %}" method="post">
+                {% csrf_token %}
+                <label>Create Container:</label><br>
+                <input type="text" name="container_name" placeholder="Container Name...">
+                <button type="submit" name="create_container">Create</button>
+            </form>
+        </div>
+        
+        <br>
+
+        <div>
+            <!-- Upload to container form -->
+            <form action="{% url 'homepage' %}" method="post" enctype="multipart/form-data"> <!-- enctpye required in file uploads -->
+                {% csrf_token %}
+                <label>Upload File to Container:</label><br>
+                <input type="file" name="blob_file">
+                <input type="text" name="container_name" placeholder="Container Name...">
+                <button type="submit" name="upload_blob">Upload</button>
+            </form>
+        </div>
+
+        <br>
 
         <!-- Check for result messages and print -->
         {% if messages %}
