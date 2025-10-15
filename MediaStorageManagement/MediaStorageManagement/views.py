@@ -94,5 +94,31 @@ def homepage(request):
                 messages.error(request, "Unexpected Azure error during upload.")
             else:
                 messages.success(request, f"Uploaded '{blob_name}' to '{container_name}'.")
+
+        # Check listing blobs
+        elif "list_blobs" in request.POST:
+            container_name = request.POST.get("container_name")
+
+            # Check validiy of name
+            error = check_container_name(container_name)
+
+            if error:
+                messages.error(request, error)
+                return render(request, "homepage.html")
+            
+            container = blob_service_client.get_container_client(container=container_name)
+            
+            # Try to list blobs
+            try:
+                blob_list = container.list_blobs()
+                for blob in blob_list:
+                    blob_name = blob.name
+                    messages.success(request, f"{blob_name}")
+            except ResourceNotFoundError:
+                messages.error(request, "Container not found.")
+            except ClientAuthenticationError:
+                messages.error(request, "Not authorized. Check Azure login.")
+            except HttpResponseError:
+                messages.error(request, "Unexpected Azure error during upload.")          
         
     return render(request, "homepage.html")

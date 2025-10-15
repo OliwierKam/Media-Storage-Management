@@ -9,7 +9,7 @@
             <!-- Create container form -->
             <form action="{% url 'homepage' %}" method="post">
                 {% csrf_token %}
-                <label>Create Container:</label><br>
+                <label><b>Create Container:</b></label><br>
                 <input type="text" name="container_name" placeholder="Container Name...">
                 <button type="submit" name="create_container">Create</button>
             </form>
@@ -21,8 +21,8 @@
             <!-- Upload to container form -->
             <form action="{% url 'homepage' %}" method="post" enctype="multipart/form-data"> <!-- enctpye required in file uploads -->
                 {% csrf_token %}
-                <label>Upload File to Container:</label><br>
-                <input type="file" name="blob_file">
+                <label><b>Upload File to Container:</b></label><br>
+                <input type="file" name="blob_file"><br>
                 <input type="text" name="container_name" placeholder="Container Name...">
                 <button type="submit" name="upload_blob">Upload</button>
             </form>
@@ -30,9 +30,21 @@
 
         <br>
 
+        <div>
+            <!-- List blobs in container -->
+            <form action="{% url 'homepage' %}" method="post">
+                {% csrf_token %}
+                <label><b>List Blobs in Container:</b></label><br>
+                <input type="text" name="container_name" placeholder="Container Name...">
+                <button type="submit" name="list_blobs">OK</button>
+            </form>
+        </div>
+
+        <br>
+
         <!-- Check for result messages and print -->
         {% if messages %}
-            {% for m in messages %}{{ m }}{% endfor %}
+            {% for m in messages %}{{ m }}<br>{% endfor %}
         {% endif %}
 
     </body>
