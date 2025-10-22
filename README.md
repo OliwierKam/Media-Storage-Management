@@ -14,6 +14,23 @@ NOTE:
 
 If 'az login' doesn't work, install CLI via https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-macos?view=azure-cli-latest
 
+
+In order to enable 'last accessed tracking' for your account:
+
+Find storage account on Azure
+>Data management
+>Lifecycle management
+>Tick 'Enable access tracking'
+
+NOTE:
+
+This incurs an additional cost but is useful to know how often a file is accessed.
+It may take a few hours for the data to get populated. May not work at the start.
+
+# Views
+
+Is responsbile for the basic logic and communication between Frontend HTML files and Azure Cloud Service
+
 # Settings
 
 The following is for the Azure account:
