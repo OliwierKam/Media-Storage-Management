@@ -38,6 +38,8 @@ def homepage(request):
     # Check form submission
     if request.method == "POST":
 
+        context = {}
+
         # Check container creation
         if "create_container" in request.POST:
             container_name = request.POST.get('container_name')
@@ -106,14 +108,19 @@ def homepage(request):
                 messages.error(request, error)
                 return render(request, "homepage.html")
             
-            container = blob_service_client.get_container_client(container=container_name)
+            container_client = blob_service_client.get_container_client(container=container_name)
             
-            # Try to list blobs
+            # Try to get list of blobs
             try:
-                blob_list = container.list_blobs()
-                for blob in blob_list:
-                    blob_name = blob.name
-                    messages.success(request, f"{blob_name}")
+                blob_list = container_client.list_blobs()
+                container = container_client.get_container_properties()
+
+                context = {
+                    'blob_list': blob_list,
+                    'container': container
+                }
+
+                return render(request, "homepage.html", context)
             except ResourceNotFoundError:
                 messages.error(request, "Container not found.")
             except ClientAuthenticationError:
@@ -122,3 +129,22 @@ def homepage(request):
                 messages.error(request, "Unexpected Azure error during upload.")          
         
     return render(request, "homepage.html")
+
+def blob_info(request, container, blob):
+    
+    # Get the blob and container client first
+    blob_client = blob_service_client.get_blob_client(container=container, blob=blob)
+    container_client = blob_service_client.get_container_client(container)
+
+    # Now get the blob and its properties
+    blob = blob_client.get_blob_properties()
+    container = container_client.get_container_properties()
+
+    context = {
+        "blob": blob,
+        "container": container
+    }
+
+    print(blob.last_modified, blob.creation_time, getattr(blob, "last_accessed_on", None))
+
+    return render(request, "blob_info.html", context)

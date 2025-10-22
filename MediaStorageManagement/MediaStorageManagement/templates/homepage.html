@@ -47,5 +47,12 @@
             {% for m in messages %}{{ m }}<br>{% endfor %}
         {% endif %}
 
+        <!-- Lists blobs on request -->
+        {% if blob_list %}
+            {% for blob in blob_list %}
+                <a href="{% url 'blob_info' container.name blob.name%}">{{blob.name}}</a><br>
+            {% endfor %}
+        {% endif %}
+
     </body>
 </html>

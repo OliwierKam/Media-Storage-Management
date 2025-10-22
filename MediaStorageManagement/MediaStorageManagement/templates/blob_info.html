@@ -1,0 +1,52 @@
+<html>
+    <head>
+        <title></title>
+        <!-- Basic Styling -->
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 30px;
+                background-color: #fafafa;
+            }
+            table {
+                border-collapse: collapse;
+                width: 60%;
+                background: white;
+            }
+            th, td {
+                border: 1px solid #ccc;
+                padding: 10px 15px;
+                text-align: left;
+            }
+            th {
+                background-color: #f2f2f2;
+                width: 200px;
+            }
+            h3 {
+                font-size: 20px;
+                margin-bottom: 10px;
+            }
+        </style>
+    </head>
+    <body>
+        {% if blob %}
+            <h3>{{ blob.name }}</h3>
+
+            <table>
+                <tr><th>Container</th><td>{{ container.name }}</td></tr>
+                <tr><th>Size</th><td>{{ blob.size|filesizeformat }}</td></tr> <!-- filesizeformat directly converts size to readable formats (KB, MB, GB) -->
+                <tr><th>Tier</th><td>{{ blob.blob_tier }}</td></tr>
+                <tr><th>Last Modified</th><td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td></tr>
+                <tr><th>Last Accessed</th><td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td></tr>
+                <tr><th>Created On</th><td>{{ blob.creation_time|date:"d-m-Y H:i"|default:"—" }}</td></tr>
+            </table>
+        {% endif %}
+
+        <br>
+
+        <!-- Should work on all browsers -->
+        <button onclick="window.history.back()">
+            Back
+        </button>
+    </body>
+</html>
