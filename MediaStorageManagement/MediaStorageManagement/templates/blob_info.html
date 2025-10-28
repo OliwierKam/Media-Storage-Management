@@ -29,20 +29,24 @@
         </style>
     </head>
     <body>
+        <!--
         {% if blob %}
             <h3>{{ blob.name }}</h3>
 
             <table>
                 <tr><th>Container</th><td>{{ container.name }}</td></tr>
-                <tr><th>Size</th><td>{{ blob.size|filesizeformat }}</td></tr> <!-- filesizeformat directly converts size to readable formats (KB, MB, GB) -->
+                <tr><th>Size</th><td>{{ blob.size|filesizeformat }}</td></tr>
                 <tr><th>Tier</th><td>{{ blob.blob_tier }}</td></tr>
                 <tr><th>Last Modified</th><td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td></tr>
                 <tr><th>Last Accessed</th><td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td></tr>
                 <tr><th>Created On</th><td>{{ blob.creation_time|date:"d-m-Y H:i"|default:"—" }}</td></tr>
             </table>
         {% endif %}
+        -->
 
-        <br>
+        Perhaps put more information here about the blob?
+
+        <br><br>
 
         <!-- Should work on all browsers -->
         <button onclick="window.history.back()">

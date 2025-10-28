@@ -112,7 +112,7 @@ def homepage(request):
             
             # Try to get list of blobs
             try:
-                blob_list = container_client.list_blobs()
+                blob_list = list(container_client.list_blobs())
                 container = container_client.get_container_properties()
 
                 context = {
@@ -144,7 +144,5 @@ def blob_info(request, container, blob):
         "blob": blob,
         "container": container
     }
-
-    print(blob.last_modified, blob.creation_time, getattr(blob, "last_accessed_on", None))
 
     return render(request, "blob_info.html", context)

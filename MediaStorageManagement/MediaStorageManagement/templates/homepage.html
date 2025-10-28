@@ -2,6 +2,32 @@
 <html>
     <head>
         <title></title>
+        <!-- Basic Styling -->
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 30px;
+                background-color: #fafafa;
+            }
+            table {
+                border-collapse: collapse;
+                width: 60%;
+                background: white;
+            }
+            th, td {
+                border: 1px solid #ccc;
+                padding: 10px 15px;
+                text-align: left;
+            }
+            th {
+                background-color: #f2f2f2;
+                width: 200px;
+            }
+            h3 {
+                font-size: 20px;
+                margin-bottom: 10px;
+            }
+        </style>
     </head>
     <body>
 
@@ -47,11 +73,48 @@
             {% for m in messages %}{{ m }}<br>{% endfor %}
         {% endif %}
 
+        <br>
+        
         <!-- Lists blobs on request -->
         {% if blob_list %}
-            {% for blob in blob_list %}
-                <a href="{% url 'blob_info' container.name blob.name%}">{{blob.name}}</a><br>
-            {% endfor %}
+            <!-- Filter through listed blobs 
+            <div>
+                Blob Filter
+                
+                <form action="{% url 'homepage' %}" method="get">
+                    {% csrf_token %}
+                    <div>
+                        <label>Name:</label><br>
+                        <input type="text" name="filter_blob_name" placeholder="Blob Name...">
+                    </div>
+
+                    <button type="submit" name="list_blobs">OK</button>
+                </form>
+            </div>
+
+            <br>
+            -->
+            <table>
+                <h3>Listing blobs in {{container.name}}</h3>
+                <tr>
+                    <th>Blob Name</th>
+                    <th>Size</th>
+                    <th>Tier</th>
+                    <th>Last Modified</th>
+                    <th>Last Accessed</th>
+                    <th>Created On</th>
+                </tr>
+                {% for blob in blob_list %}
+                    <tr>
+                        <td><b><a href="{% url 'blob_info' container.name blob.name%}">{{blob.name}}</a></b></td>
+                        <td>{{ blob.size|filesizeformat }}</td> <!-- filesizeformat directly converts size to readable formats (KB, MB, GB) -->
+                        <td>{{ blob.blob_tier }}</td>
+                        <td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td>
+                        <td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td>
+                        <td>{{ blob.creation_time|date:"d-m-Y H:i"|default:"—" }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
         {% endif %}
 
     </body>
