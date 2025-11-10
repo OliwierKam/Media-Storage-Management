@@ -7,6 +7,7 @@ Required installations using PIP:
 
 azure-identity
 azure-storage-blob
+azure-monitor-query
 
 Follow https://learn.microsoft.com/en-us/python/api/overview/azure/identity-readme?view=azure-python for set-up guide
 
@@ -33,5 +34,14 @@ Is responsbile for the basic logic and communication between Frontend HTML files
 
 # Settings
 
-The following is for the Azure account:
-AZURE_STORAGE_ACCOUNT_URL = https://<account>.blob.core.windows.net
+The following is for the azure storage account name:
+AZURE_STORAGE_ACCOUNT_NAME = "YOUR_NAME"
+
+This gets automatically filled in the URL:
+AZURE_STORAGE_ACCOUNT_URL = f"https://{AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
+
+Region of your Account:
+AZURE_REGION = "YOUR REGION"
+
+The GUID can be found under "Workspace ID" of your workspace:
+LOG_ANALYTICS_WORKSPACE_ID = "WORKSPACE_GUID"
