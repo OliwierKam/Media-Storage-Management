@@ -103,6 +103,7 @@
                     <th>Last Modified</th>
                     <th>Last Accessed</th>
                     <th>Created On</th>
+                    <th>Estimated monthly cost</th>
                 </tr>
                 {% for blob in blob_list %}
                     <tr>
@@ -112,6 +113,7 @@
                         <td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td>
                         <td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td>
                         <td>{{ blob.creation_time|date:"d-m-Y H:i"|default:"—" }}</td>
+                        <td>£{{ blob.est_cost_month|default:"—" }}</td>
                     </tr>
                 {% endfor %}
             </table>

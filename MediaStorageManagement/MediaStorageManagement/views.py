@@ -4,6 +4,8 @@ from django.http import HttpResponse
 from django.conf import settings
 from django.contrib import messages
 
+from utils import pricing
+
 # Azure imports
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
@@ -114,6 +116,15 @@ def homepage(request):
             try:
                 blob_list = list(container_client.list_blobs())
                 container = container_client.get_container_properties()
+
+                # Calculate estimate costs
+                for blob in blob_list:
+                    try:
+                        est = pricing.estimate_capacity_month(size_bytes=blob.size, tier=blob.blob_tier)
+                    except Exception:
+                        est = None
+                    # Could also round(est, 4), however with miniscule pricing, the number would be equal to 0.0
+                    setattr(blob, "est_cost_month", None if est is None else est)
 
                 context = {
                     'blob_list': blob_list,
