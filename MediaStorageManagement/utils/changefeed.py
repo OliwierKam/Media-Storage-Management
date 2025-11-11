@@ -1,4 +1,3 @@
-# utils/changefeed.py
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 from azure.identity import DefaultAzureCredential

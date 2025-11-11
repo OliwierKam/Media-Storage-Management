@@ -27,6 +27,9 @@
                 font-size: 20px;
                 margin-bottom: 10px;
             }
+            .controls { margin-bottom: 6px; }
+            .controls input[type="text"] { width: 260px; }
+            .muted { color:#666; font-size:12px; }
         </style>
     </head>
     <body>
@@ -57,12 +60,27 @@
         <br>
 
         <div>
-            <!-- List blobs in container -->
-            <form action="{% url 'homepage' %}" method="post">
+            <!-- List blobs in container (GET so paging links work) -->
+            <form action="{% url 'homepage' %}" method="get">
                 {% csrf_token %}
-                <label><b>List Blobs in Container:</b></label><br>
-                <input type="text" name="container_name" placeholder="Container Name...">
-                <button type="submit" name="list_blobs">OK</button>
+                <div class="controls">
+                    <label><b>List Blobs in Container:</b></label><br>
+                    <input type="text" name="container_name" placeholder="Container Name..."
+                           value="{{ container_name|default:'' }}">
+                </div>
+                <div class="controls">
+                    <!-- Optional: virtual folder prefix (scales for millions of blobs) -->
+                    <input type="text" name="prefix" placeholder="Prefix (e.g. photos/2025/)"
+                           value="{{ prefix|default:'' }}">
+                    <span class="muted">Tip: filter by prefix to narrow results.</span>
+                </div>
+                <div class="controls">
+                    <input type="number" name="page_size" min="10" max="5000" step="10"
+                           placeholder="Page size"
+                           value="{{ page_size|default:'100' }}">
+                    <span class="muted">Adjust page size to balance speed and detail.</span>
+                </div>
+                <button type="submit">List</button>
             </form>
         </div>
 
@@ -78,14 +96,17 @@
         <!-- Lists blobs on request -->
         {% if blob_list %}
             <table>
-                <h3>Listing blobs in {{container.name}}</h3>
+                <h3>
+                    Listing blobs in {{ container.name }}
+                    {% if prefix %}<span class="muted">(prefix: {{ prefix }})</span>{% endif %}
+                </h3>
                 <tr>
                     <th>Blob Name</th>
                     <th>Size</th>
                     <th>Tier</th>
                     <th>Last Modified</th>
                     <th>Last Accessed</th>
-                    <th>Created On</th>
+                    <th>Days Since Last Access</th>
                     <th>Current Usage</th>
                     <th>Est. Capacity £/mo</th>
                 </tr>
@@ -96,7 +117,7 @@
                         <td>{{ blob.blob_tier }}</td>
                         <td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td>
                         <td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td>
-                        <td>{{ blob.creation_time|date:"d-m-Y H:i"|default:"—" }}</td>
+                        <td>{{ blob.days_since_access|default_if_none:"—" }}</td>
                         <td>{{ blob.usage_bucket }}</td>
                         <td>£{{ blob.est_capacity_month|floatformat:8 }}</td>
                     </tr>
@@ -105,34 +126,24 @@
 
             <br>
 
-            <!-- Per-tier totals for this container -->
-            <table>
-                <h3>Estimated capacity cost totals ({{container.name}})</h3>
-                <tr>
-                    <th>Tier</th>
-                    <th>Est. Capacity £/mo</th>
-                </tr>
-                <tr>
-                    <td>Hot</td>
-                    <td>£{{ tier_totals.Hot|floatformat:8 }}</td>
-                </tr>
-                <tr>
-                    <td>Cool</td>
-                    <td>£{{ tier_totals.Cool|floatformat:8 }}</td>
-                </tr>
-                <tr>
-                    <td>Cold</td>
-                    <td>£{{ tier_totals.Cold|floatformat:8 }}</td>
-                </tr>
-                <tr>
-                    <td>Archive</td>
-                    <td>£{{ tier_totals.Archive|floatformat:8 }}</td>
-                </tr>
-                <tr>
-                    <th>Total</th>
-                    <th>£{{ tier_grand_total|floatformat:8 }}</th>
-                </tr>
-            </table>
+            <!-- Paging (Azure continuation-token based; URLs stay short -->
+            <div class="controls">
+                {% if prev_url %}
+                    <a href="{{ prev_url }}">← Previous</a>
+                {% else %}
+                    <span class="muted">← Previous</span>
+                {% endif %}
+
+                <span class="muted" style="margin:0 10px;">
+                    Page {{ page_num }}{% if has_next is not None %}{% if not has_next %} (end){% endif %}{% endif %}
+                </span>
+
+                {% if next_url %}
+                    <a href="{{ next_url }}">Next →</a>
+                {% else %}
+                    <span class="muted">Next →</span>
+                {% endif %}
+            </div>
 
         {% endif %}
 

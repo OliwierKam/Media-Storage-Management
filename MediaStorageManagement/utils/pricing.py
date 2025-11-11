@@ -1,4 +1,3 @@
-# utils/pricing.py (MVP-trimmed)
 BYTES_PER_GB = 1024 ** 3
 
 # For Germany West Central, RA GRS Redundancy, Hierarchical Namespace

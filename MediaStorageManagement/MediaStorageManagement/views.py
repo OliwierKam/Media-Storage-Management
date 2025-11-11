@@ -2,6 +2,8 @@
 from django.shortcuts import render
 from django.conf import settings
 from django.contrib import messages
+from django.urls import reverse
+from urllib.parse import urlencode
 
 # Django app packages
 from utils import pricing, changefeed
@@ -56,14 +58,43 @@ def usage_bucket(last_accessed_on):
         return "Cool"
     return "Cold"
 
+# Page blobs efficiently with continuation tokens
+def list_blobs_page(container_client, prefix: str | None, continuation_token: str | None, page_size: int = 100):
+    pager = container_client.list_blobs(
+        name_starts_with=prefix or None,
+        results_per_page=page_size,
+    ).by_page(continuation_token)
+    page = next(pager, [])
+    blobs = list(page)
+    next_token = pager.continuation_token  # None if no more pages
+    return blobs, next_token
+
+# Build a short key that identifies a paging universe for session storage
+def _page_key(container_name: str, prefix: str | None, page_size: int) -> str:
+    # small normalized key to partition token stacks
+    return f"{container_name}||{prefix or ''}||{page_size}"
+
+# Ensure a token stack exists in session for this key
+def _get_stack(request, key: str):
+    stacks = request.session.get("ct_stacks", {})
+    stack = stacks.get(key)
+    if stack is None:
+        stack = [""]  # page 1 start marker (token for first page is empty/None)
+        stacks[key] = stack
+        request.session["ct_stacks"] = stacks
+    return stack
+
+def _set_stack(request, key: str, stack):
+    stacks = request.session.get("ct_stacks", {})
+    stacks[key] = stack
+    request.session["ct_stacks"] = stacks
+
 # ----- VIEWS -----
 
 # homepage template
 def homepage(request):
-    # Check form submission
+    # Handle POST actions (create/upload) and let listing flow through to GET for paging
     if request.method == "POST":
-
-        context = {}
 
         # Check container creation
         if "create_container" in request.POST:
@@ -83,10 +114,11 @@ def homepage(request):
                 messages.info(request, f"Container '{container_name}' already exists.")
             except ClientAuthenticationError: # Pops if changes aren't authenticated.
                 messages.error(request, "Not authorized. Check Azure login.")
-            except HttpResponseError as ex:
+            except HttpResponseError:
                 messages.error(request, "Unexpected Azure error while creating the container.")
             else:
                 messages.success(request, f"Container '{container_name}' created.")
+            return render(request, "homepage.html")
             
         # Check blob upload
         elif "upload_blob" in request.POST:
@@ -121,67 +153,114 @@ def homepage(request):
                 messages.error(request, "Unexpected Azure error during upload.")
             else:
                 messages.success(request, f"Uploaded '{blob_name}' to '{container_name}'.")
+            return render(request, "homepage.html")
 
-        # Check listing blobs
-        elif "list_blobs" in request.POST:
-            container_name = request.POST.get("container_name")
+    # Scalable listing via GET (Azure-native cursor paging; session-backed prev/next)
+    if request.method == "GET" and ("container_name" in request.GET):
+        container_name = request.GET.get("container_name", "").strip()
 
-            # Check validiy of name
-            error = check_container_name(container_name)
+        # Check validiy of name
+        error = check_container_name(container_name)
 
-            if error:
-                messages.error(request, error)
-                return render(request, "homepage.html")
-            
-            container_client = blob_service_client.get_container_client(container=container_name)
-            
-            # Try to get list of blobs
-            try:
-                blob_list = list(container_client.list_blobs())
-                container = container_client.get_container_properties()
+        if error:
+            messages.error(request, error)
+            return render(request, "homepage.html")
+        
+        prefix = request.GET.get("prefix") or None
 
-                tier_totals = {"Hot": 0.0, "Cool": 0.0, "Cold": 0.0, "Archive": 0.0}
+        # configurable page size; clamp to safe range
+        try:
+            page_size = int(request.GET.get("page_size", 100))
+        except ValueError:
+            page_size = 100
+        page_size = max(10, min(5000, page_size))
 
-                # Attach MVP cost & usage classification to each blob row
-                for b in blob_list:
-                    # capacity £/mo (size × tier per-GB-month)
-                    cap = pricing.estimate_capacity_month(size_bytes=b.size, tier=b.blob_tier)
+        # requested page (1-based)
+        try:
+            p = int(request.GET.get("p", "1") or "1")
+        except ValueError:
+            p = 1
+        if p < 1:
+            p = 1
 
-                    # usage bucket based on Azure last access time
-                    bucket = usage_bucket(getattr(b, "last_accessed_on", None))
+        key = _page_key(container_name, prefix, page_size)
+        stack = _get_stack(request, key)
 
-                    # Keeps usage £/mo as 0.00 for now
-                    usage_cost = 0.0
+        # If this is a new query (first arrival without explicit p) reset stack
+        if "container_name" in request.GET and "p" not in request.GET:
+            stack = [""]  # reset to start
+            _set_stack(request, key, stack)
 
-                    # Normalize the tier so we can group totals reliably
-                    tier_norm = pricing._tier(getattr(b, "blob_tier", None))
+        # If navigating forward beyond known tokens, we step from last known token
+        current_index = min(p - 1, len(stack) - 1)
+        start_token = stack[current_index] or None
 
-                    # Add to the per-tier totals
-                    tier_totals[tier_norm] += cap
+        container_client = blob_service_client.get_container_client(container=container_name)
 
-                    # attach for template
-                    setattr(b, "usage_bucket", bucket)
-                    setattr(b, "est_capacity_month", cap)
-                    setattr(b, "est_usage_month", usage_cost)
-                    setattr(b, "est_total_month", cap + usage_cost)
+        try:
+            # Fetch ONE Azure page starting at start_token
+            blob_list, next_ct = list_blobs_page(container_client, prefix, start_token, page_size=page_size)
+            container = container_client.get_container_properties()
 
-                # Grand total for the container
-                tier_grand_total = sum(tier_totals.values())
+            # If we navigated to a new page (exactly one past the end of known stack) and Azure gave next_ct, append it
+            if (p == len(stack)) and next_ct:
+                stack.append(next_ct or "")
+                _set_stack(request, key, stack)
 
-                context = {
-                    'blob_list': blob_list,
-                    'container': container,
-                    'tier_totals': tier_totals,
-                    'tier_grand_total': tier_grand_total,
-                }
+            # Annotate only current page rows
+            now_utc = datetime.now(timezone.utc)
 
-                return render(request, "homepage.html", context)
-            except ResourceNotFoundError:
-                messages.error(request, "Container not found.")
-            except ClientAuthenticationError:
-                messages.error(request, "Not authorized. Check Azure login.")
-            except HttpResponseError:
-                messages.error(request, "Unexpected Azure error during upload.")          
+            for b in blob_list:
+                cap = pricing.estimate_capacity_month(size_bytes=b.size, tier=b.blob_tier)
+                last_acc = getattr(b, "last_accessed_on", None)
+                bucket = usage_bucket(last_acc)
+
+                days_since = (now_utc - last_acc).days if last_acc else None
+                setattr(b, "usage_bucket", bucket)
+                setattr(b, "est_capacity_month", cap)
+                setattr(b, "days_since_access", days_since)
+
+            # Build Prev/Next URLs (short; no giant tokens in URL)
+            base_params = {
+                "container_name": container_name,
+                "page_size": page_size,
+            }
+            if prefix:
+                base_params["prefix"] = prefix
+
+            prev_url = None
+            if p > 1:
+                params_prev = base_params.copy()
+                params_prev["p"] = p - 1
+                prev_url = f"{reverse('homepage')}?{urlencode(params_prev)}"
+
+            next_url = None
+            if next_ct:  # only if Azure says there is a next page
+                params_next = base_params.copy()
+                params_next["p"] = p + 1
+                next_url = f"{reverse('homepage')}?{urlencode(params_next)}"
+
+            context = {
+                'blob_list': blob_list,
+                'container': container,
+                'container_name': container_name,
+                'prefix': (prefix or ""),
+                'page_size': page_size,
+
+                # paging UI
+                'page_num': p,
+                'prev_url': prev_url,
+                'next_url': next_url,
+                'has_next': bool(next_ct),
+            }
+
+            return render(request, "homepage.html", context)
+        except ResourceNotFoundError:
+            messages.error(request, "Container not found.")
+        except ClientAuthenticationError:
+            messages.error(request, "Not authorized. Check Azure login.")
+        except HttpResponseError:
+            messages.error(request, "Unexpected Azure error during upload.")          
         
     return render(request, "homepage.html")
 
@@ -213,12 +292,15 @@ def blob_info(request, container, blob):
     bucket = usage_bucket(last_accessed)
 
     # Azure Change Feed write-side counts (create/overwrite/metadata/tier/delete)
-    change_counts = changefeed.get_write_counts_for_blob(
-        account_url=settings.AZURE_STORAGE_ACCOUNT_URL,
-        container=container,
-        blob_path=blob,
-        days=30, # adjust the window of days for lookback.
-    )
+    try:
+        change_counts = changefeed.get_write_counts_for_blob(
+            account_url=settings.AZURE_STORAGE_ACCOUNT_URL,
+            container=container,
+            blob_path=blob,
+            days=30, # adjust the window of days for lookback.
+        )
+    except Exception:
+        change_counts = {"created": "—", "updated": "—", "deleted": "—"}
 
     est_total = est_capacity
 
@@ -252,7 +334,6 @@ def blob_info(request, container, blob):
 
         # estimates (£/mo)
         "est_capacity_month": est_capacity,
-        "est_usage_month": est_usage,
         "est_total_month": est_total,
     }
 

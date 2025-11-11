@@ -3,5 +3,5 @@ from . import views
 
 urlpatterns = [
     path("homepage/", views.homepage, name="homepage"),
-    path("homepage/<str:container>/<str:blob>", views.blob_info, name="blob_info")
+    path("homepage/<str:container>/<path:blob>", views.blob_info, name="blob_info")
 ]
