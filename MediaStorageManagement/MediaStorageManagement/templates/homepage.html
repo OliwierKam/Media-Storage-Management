@@ -102,6 +102,38 @@
                     </tr>
                 {% endfor %}
             </table>
+
+            <br>
+
+            <!-- Per-tier totals for this container -->
+            <table>
+                <h3>Estimated capacity cost totals ({{container.name}})</h3>
+                <tr>
+                    <th>Tier</th>
+                    <th>Est. Capacity £/mo</th>
+                </tr>
+                <tr>
+                    <td>Hot</td>
+                    <td>£{{ tier_totals.Hot|floatformat:8 }}</td>
+                </tr>
+                <tr>
+                    <td>Cool</td>
+                    <td>£{{ tier_totals.Cool|floatformat:8 }}</td>
+                </tr>
+                <tr>
+                    <td>Cold</td>
+                    <td>£{{ tier_totals.Cold|floatformat:8 }}</td>
+                </tr>
+                <tr>
+                    <td>Archive</td>
+                    <td>£{{ tier_totals.Archive|floatformat:8 }}</td>
+                </tr>
+                <tr>
+                    <th>Total</th>
+                    <th>£{{ tier_grand_total|floatformat:8 }}</th>
+                </tr>
+            </table>
+
         {% endif %}
 
     </body>

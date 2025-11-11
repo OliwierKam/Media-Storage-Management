@@ -140,6 +140,8 @@ def homepage(request):
                 blob_list = list(container_client.list_blobs())
                 container = container_client.get_container_properties()
 
+                tier_totals = {"Hot": 0.0, "Cool": 0.0, "Cold": 0.0, "Archive": 0.0}
+
                 # Attach MVP cost & usage classification to each blob row
                 for b in blob_list:
                     # capacity £/mo (size × tier per-GB-month)
@@ -148,8 +150,14 @@ def homepage(request):
                     # usage bucket based on Azure last access time
                     bucket = usage_bucket(getattr(b, "last_accessed_on", None))
 
-                    # MVP keeps usage £/mo as 0.00 for now; you can change per-bucket add-ons later
+                    # Keeps usage £/mo as 0.00 for now
                     usage_cost = 0.0
+
+                    # Normalize the tier so we can group totals reliably
+                    tier_norm = pricing._tier(getattr(b, "blob_tier", None))
+
+                    # Add to the per-tier totals
+                    tier_totals[tier_norm] += cap
 
                     # attach for template
                     setattr(b, "usage_bucket", bucket)
@@ -157,9 +165,14 @@ def homepage(request):
                     setattr(b, "est_usage_month", usage_cost)
                     setattr(b, "est_total_month", cap + usage_cost)
 
+                # Grand total for the container
+                tier_grand_total = sum(tier_totals.values())
+
                 context = {
                     'blob_list': blob_list,
-                    'container': container
+                    'container': container,
+                    'tier_totals': tier_totals,
+                    'tier_grand_total': tier_grand_total,
                 }
 
                 return render(request, "homepage.html", context)
