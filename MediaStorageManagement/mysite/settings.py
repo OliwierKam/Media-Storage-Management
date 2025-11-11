@@ -128,5 +128,4 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AZURE_STORAGE_ACCOUNT_NAME = "newoliwier"
 AZURE_STORAGE_ACCOUNT_URL = f"https://{AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
 
-AZURE_REGION = "germanywestcentral"
-# LOG_ANALYTICS_WORKSPACE_ID = "efb12e4d-5b08-4d49-9e15-b677c8b5b0ec"
+AZURE_REGION = "germanywestcentral" # Currently not used, however this is used for the pricings

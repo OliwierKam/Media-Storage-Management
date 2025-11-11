@@ -1,18 +1,17 @@
 # Django imports
 from django.shortcuts import render
-from django.http import HttpResponse
 from django.conf import settings
 from django.contrib import messages
 
 # Django app packages
-from utils import pricing
+from utils import pricing, changefeed
 
 # Other
 from datetime import datetime, timezone
 
 # Azure imports
 from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+from azure.storage.blob import BlobServiceClient
 from azure.core.exceptions import ResourceExistsError, ClientAuthenticationError, HttpResponseError, ResourceNotFoundError
 
 # Authorise access to data in azure
@@ -179,7 +178,7 @@ def blob_info(request, container, blob):
     blob_client = blob_service_client.get_blob_client(container=container, blob=blob)
     container_client = blob_service_client.get_container_client(container)
 
-    # Properties
+    # Properties from Azure
     props = blob_client.get_blob_properties()
     container_props = container_client.get_container_properties()
 
@@ -187,58 +186,58 @@ def blob_info(request, container, blob):
     tier_raw = getattr(props, "blob_tier", None) or getattr(props, "access_tier", None) or "Hot"
     tier_norm = pricing._tier(tier_raw)
 
-    # Size
+    # Size & unit price
     size_bytes = int(getattr(props, "size", 0))
     size_gb = size_bytes / pricing.BYTES_PER_GB
-
-    # Pricing & estimates
     unit_price = pricing.PRICE_PER_GB_MONTH[tier_norm]
+
+    # Capacity estimate (£/mo)
     est_capacity = pricing.estimate_capacity_month(size_bytes=size_bytes, tier=tier_norm)
 
-    # Usage (zeros; still show inputs & bucket)
+    # Usage bucket from Azure Last Access Time
     last_accessed = getattr(props, "last_accessed_on", None)
-    days_since_access = None
-    if last_accessed:
-        days_since_access = (datetime.now(timezone.utc) - last_accessed).days
-
-    # reuse usage_bucket helper already defined above
+    days_since_access = (datetime.now(timezone.utc) - last_accessed).days if last_accessed else None
     bucket = usage_bucket(last_accessed)
 
-    usage = pricing.Usage(egress_gb=0.0, ingress_gb=0.0, reads=0, writes=0, other_ops=0)
-    est_usage = pricing.estimate_usage_month(tier_norm, usage)
-    est_total = est_capacity + est_usage
+    # Azure Change Feed write-side counts (create/overwrite/metadata/tier/delete)
+    change_counts = changefeed.get_write_counts_for_blob(
+        account_url=settings.AZURE_STORAGE_ACCOUNT_URL,
+        container=container,
+        blob_path=blob,
+        days=30, # adjust the window of days for lookback.
+    )
+
+    est_total = est_capacity
 
     context = {
-        # original context
+        # original objects
         "blob": props,
         "container": container_props,
 
-        # ids
+        # identifiers
         "blob_name": blob,
         "container_name": container,
 
-        # debug/raw inputs
-        "tier_raw": tier_raw,
-        "tier_norm": tier_norm,
-        "size_bytes": size_bytes,
-        "size_gb": size_gb,
-        "unit_price": unit_price,
-
-        # timestamps
+        # timestamps / usage label
         "last_modified": getattr(props, "last_modified", None),
         "last_accessed_on": last_accessed,
         "creation_time": getattr(props, "creation_time", None),
         "days_since_access": days_since_access,
         "usage_bucket": bucket,
 
-        # usage inputs (kept at zero for MVP but visible)
-        "usage_egress_gb": usage.egress_gb,
-        "usage_ingress_gb": usage.ingress_gb,
-        "usage_reads": usage.reads,
-        "usage_writes": usage.writes,
-        "usage_other_ops": usage.other_ops,
+        # size & tier & pricing inputs
+        "size_bytes": size_bytes,
+        "size_gb": size_gb,
+        "tier_raw": tier_raw,
+        "tier_norm": tier_norm,
+        "unit_price": unit_price,
 
-        # estimates
+        # change feed counts
+        "cf_created": change_counts["created"],
+        "cf_updated": change_counts["updated"],
+        "cf_deleted": change_counts["deleted"],
+
+        # estimates (£/mo)
         "est_capacity_month": est_capacity,
         "est_usage_month": est_usage,
         "est_total_month": est_total,

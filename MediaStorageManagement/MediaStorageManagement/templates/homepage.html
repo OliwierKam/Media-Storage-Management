@@ -45,7 +45,7 @@
 
         <div>
             <!-- Upload to container form -->
-            <form action="{% url 'homepage' %}" method="post" enctype="multipart/form-data"> <!-- enctpye required in file uploads -->
+            <form action="{% url 'homepage' %}" method="post" enctype="multipart/form-data">
                 {% csrf_token %}
                 <label><b>Upload File to Container:</b></label><br>
                 <input type="file" name="blob_file"><br>
@@ -77,23 +77,6 @@
         
         <!-- Lists blobs on request -->
         {% if blob_list %}
-            <!-- Filter through listed blobs 
-            <div>
-                Blob Filter
-                
-                <form action="{% url 'homepage' %}" method="get">
-                    {% csrf_token %}
-                    <div>
-                        <label>Name:</label><br>
-                        <input type="text" name="filter_blob_name" placeholder="Blob Name...">
-                    </div>
-
-                    <button type="submit" name="list_blobs">OK</button>
-                </form>
-            </div>
-
-            <br>
-            -->
             <table>
                 <h3>Listing blobs in {{container.name}}</h3>
                 <tr>
@@ -105,19 +88,17 @@
                     <th>Created On</th>
                     <th>Current Usage</th>
                     <th>Est. Capacity £/mo</th>
-                    <th>Est. Total £/mo</th>
                 </tr>
                 {% for blob in blob_list %}
                     <tr>
-                        <td><b><a href="{% url 'blob_info' container.name blob.name%}">{{blob.name}}</a></b></td>
-                        <td>{{ blob.size|filesizeformat }}</td> <!-- filesizeformat directly converts size to readable formats (KB, MB, GB) -->
+                        <td><b><a href="{% url 'blob_info' container.name blob.name %}">{{ blob.name }}</a></b></td>
+                        <td>{{ blob.size|filesizeformat }}</td>
                         <td>{{ blob.blob_tier }}</td>
                         <td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td>
                         <td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td>
                         <td>{{ blob.creation_time|date:"d-m-Y H:i"|default:"—" }}</td>
                         <td>{{ blob.usage_bucket }}</td>
                         <td>£{{ blob.est_capacity_month|floatformat:8 }}</td>
-                        <td><b>£{{ blob.est_total_month|floatformat:8 }}</b></td>
                     </tr>
                 {% endfor %}
             </table>

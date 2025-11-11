@@ -1,17 +1,18 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <title></title>
-        <!-- Basic Styling -->
+        <title>Blob Details</title>
+
         <style>
             body {
-                font-family: Arial,
-                sans-serif; margin: 30px;
+                font-family: Arial, sans-serif;
+                margin: 30px;
                 background: #fafafa;
             }
             table {
                 border-collapse: collapse;
-                background: #fff; width: 70%;
+                background: #fff;
+                width: 70%;
             }
             th, td {
                 border: 1px solid #ddd;
@@ -37,11 +38,14 @@
     </head>
 
     <body>
+
         <h2>Blob: <span class="mono">{{ blob_name }}</span></h2>
         <div class="small">Container: <span class="mono">{{ container_name }}</span></div>
         <br>
 
         <table>
+
+            <!-- Identity -->
             <tr><th colspan="2">Identity</th></tr>
             <tr>
                 <th>Container</th>
@@ -52,6 +56,7 @@
                 <td class="mono">{{ blob_name }}</td>
             </tr>
 
+            <!-- Timestamps -->
             <tr><th colspan="2">Timestamps</th></tr>
             <tr>
                 <th>Last modified</th>
@@ -66,14 +71,21 @@
                 <td>{{ creation_time|date:"d-m-Y H:i:s"|default:"—" }}</td>
             </tr>
             <tr>
-                <th>Days since access</th>
-                <td>{% if days_since_access is not None %}{{ days_since_access }} days{% else %}—{% endif %}</td>
+                <th>Days since last access</th>
+                <td>
+                    {% if days_since_access is not None %}
+                        {{ days_since_access }} days
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
             </tr>
             <tr>
                 <th>Usage bucket</th>
                 <td>{{ usage_bucket }}</td>
             </tr>
 
+            <!-- Size & Tier -->
             <tr><th colspan="2">Size & Tier</th></tr>
             <tr>
                 <th>Size (bytes)</th>
@@ -92,45 +104,43 @@
                 <td class="mono">{{ tier_norm }}</td>
             </tr>
 
+            <!-- Pricing Inputs -->
             <tr><th colspan="2">Pricing Inputs</th></tr>
             <tr>
                 <th>Unit price (£ / GB·month)</th>
                 <td class="mono">£{{ unit_price }}</td>
             </tr>
 
-            <tr><th colspan="2">Usage Inputs (MVP placeholders)</th></tr>
+            <!-- Azure Change Feed activity -->
+            <tr><th colspan="2">Azure Change Feed (Write-Side Activity) past 30 days</th></tr>
             <tr>
-                <th>Egress (GB)</th>
-                <td class="mono">{{ usage_egress_gb|floatformat:6 }}</td>
+                <th>Created events</th>
+                <td class="mono">{{ cf_created }}</td>
             </tr>
             <tr>
-                <th>Ingress (GB)</th>
-                <td class="mono">{{ usage_ingress_gb|floatformat:6 }}</td>
+                <th>Updated / Overwritten / Metadata changes</th>
+                <td class="mono">{{ cf_updated }}</td>
             </tr>
             <tr>
-                <th>Reads / Writes / Other ops</th>
-                <td class="mono">{{ usage_reads }} / {{ usage_writes }} / {{ usage_other_ops }}</td>
+                <th>Deleted events</th>
+                <td class="mono">{{ cf_deleted }}</td>
             </tr>
 
+            <!-- Estimates -->
             <tr><th colspan="2">Estimates</th></tr>
             <tr>
                 <th>Est. Capacity (£/mo)</th>
                 <td class="mono">£{{ est_capacity_month|floatformat:8 }}</td>
             </tr>
             <tr>
-                <th>Est. Usage (£/mo)</th>
-                <td class="mono">£{{ est_usage_month|floatformat:8 }}</td>
-            </tr>
-            <tr>
                 <th><b>Est. Total (£/mo)</b></th>
                 <td class="mono"><b>£{{ est_total_month|floatformat:8 }}</b></td>
             </tr>
+
         </table>
 
         <br>
-        <!-- Should work on all browsers -->
-        <button onclick="window.history.back()">
-            Back
-        </button>
+        <button onclick="window.history.back()">Back</button>
+
     </body>
 </html>

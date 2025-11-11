@@ -3,7 +3,7 @@ Media storage management web application integrated with Azure Blob Storage.
 
 # Set Up on Local Machine
 
-Required installations using PIP:
+Required installations using PIP: (py -m pip install ...)
 
 azure-identity
 azure-storage-blob
@@ -13,8 +13,9 @@ Follow https://learn.microsoft.com/en-us/python/api/overview/azure/identity-read
 
 NOTE:
 
-If 'az login' doesn't work, install CLI via https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-macos?view=azure-cli-latest
+If 'az login' doesn't work, install CLI via https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-macos?view=azure-cli-lates
 
+---
 
 In order to enable 'last accessed tracking' for your account:
 
@@ -27,6 +28,21 @@ NOTE:
 
 This incurs an additional cost but is useful to know how often a file is accessed.
 It may take a few hours for the data to get populated. May not work at the start.
+
+---
+
+In order to enable blob change feed:
+
+Find storage account on Azure
+>Data management
+>Data protection
+>Enable blob change feed
+
+NOTE:
+
+Deleting feed logs after x amount of days is advised to minimise costs.
+At the moment views only lists events in the past 30 days.
+Similarly, log feed is set to delete after 30 days on Azure on my storage account.
 
 # Views
 
