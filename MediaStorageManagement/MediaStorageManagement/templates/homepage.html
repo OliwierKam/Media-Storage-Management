@@ -103,7 +103,9 @@
                     <th>Last Modified</th>
                     <th>Last Accessed</th>
                     <th>Created On</th>
-                    <th>Estimated monthly cost</th>
+                    <th>Current Usage</th>
+                    <th>Est. Capacity £/mo</th>
+                    <th>Est. Total £/mo</th>
                 </tr>
                 {% for blob in blob_list %}
                     <tr>
@@ -113,7 +115,9 @@
                         <td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td>
                         <td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td>
                         <td>{{ blob.creation_time|date:"d-m-Y H:i"|default:"—" }}</td>
-                        <td>£{{ blob.est_cost_month|default:"—" }}</td>
+                        <td>{{ blob.usage_bucket }}</td>
+                        <td>£{{ blob.est_capacity_month|floatformat:8 }}</td>
+                        <td><b>£{{ blob.est_total_month|floatformat:8 }}</b></td>
                     </tr>
                 {% endfor %}
             </table>

@@ -1,15 +1,8 @@
-BYTES_PER_GB = 1024**3
+from dataclasses import dataclass
 
-"""
-Note: Check later if it is possible to get these from an Azure package instead)
-https://azure.microsoft.com/en-us/pricing/details/storage/blobs/
+BYTES_PER_GB = 1024 ** 3
 
-Region: Germany West Central
-Redundancy: RA GRS
-File Structure: Hierarchical Namespace
-
-Data storage prices pay-as-you-go: First 50 terabyte (TB)/month (£ per GB)
-"""
+# Germany West Central • RA-GRS • HNS — £ per GB-month
 PRICE_PER_GB_MONTH = {
     "Hot":     0.0371,
     "Cool":    0.01889,
@@ -17,28 +10,55 @@ PRICE_PER_GB_MONTH = {
     "Archive": 0.00211,
 }
 
-"""
-The following function estimates a blob's current cost per month in its tier.
+# OPTIONAL usage rates — rough placeholders.
+BANDWIDTH_PRICE_PER_GB = 0.05   # outbound to internet (example)
+INGRESS_PRICE_PER_GB   = 0.00   # inbound is typically £0 for Azure
 
-days_in_month is currently set to 30 for an average
-(although for more accurate results, this can be acjusted to be 28/29/30/31 depending on the month)
+# If I can later include per-10k operation costs, keep this.
+PRICE_PER_10K_OPS = {
+    "Hot":     {"read": 0.0043, "write": 0.1058, "other": 0.0043},
+    "Cool":    {"read": 0.0099, "write": 0.1964, "other": 0.0043},
+    "Cold":    {"read": 0.0982, "write": 0.3535, "other": 0.0043},
+    "Archive": {"read": 5.2770, "write": 0.2259, "other": 0.0043},
+}
 
-days_in_tier states how long the blob has been in this tier for this month. This can also be adjusted for accuracy.
+def _tier(t):
+    s = str(t or "").lower()
+    if "hot" in s: return "Hot"
+    if "cool" in s: return "Cool"
+    if "cold" in s: return "Cold"
+    if "archive" in s: return "Archive"
+    return "Hot"
 
-At the moment, I believe 30 for both factors is the correct number, as we are tring to find the average cost for a blob in its current tier.
-"""
-def estimate_capacity_month(size_bytes: int, tier: str, days_in_month: int = 30, days_in_tier: int = 30) -> float:
-    # normalize tier (Blob SDK may give enums/None)
-    t = (tier or "Hot")
-    if not isinstance(t, str):
-        t = str(t)
-    # Map enum-like values to strings if needed
-    if "Hot" in t: t = "Hot"
-    elif "Cool" in t: t = "Cool"
-    elif "Cold" in t: t = "Cold"
-    elif "Archive" in t: t = "Archive"
-    else: t = "Hot"
-
+def estimate_capacity_month(size_bytes: int, tier: str) -> float:
+    # Capacity-only monthly estimate for the blob's CURRENT tier.
+    t = _tier(tier)
     price = PRICE_PER_GB_MONTH[t]
-    size_gb = size_bytes / BYTES_PER_GB
-    return size_gb * price * (days_in_tier / days_in_month)
+    return (size_bytes / BYTES_PER_GB) * price
+
+@dataclass
+class Usage:
+    # All optional — pass zeros until you I have real numbers
+    egress_gb: float = 0.0 # GB downloaded out of Azure/internet
+    ingress_gb: float = 0.0 # GB uploaded into Azure
+    reads: int = 0 # if you choose to count app reads
+    writes: int = 0 # if you choose to count app writes
+    other_ops: int = 0 # metadata/tag/list/etc.
+
+def estimate_usage_month(tier: str, u: Usage) -> float:
+    # usage cost = bandwidth + optional ops.
+
+    # bandwidth
+    bw_cost = u.egress_gb * BANDWIDTH_PRICE_PER_GB + u.ingress_gb * INGRESS_PRICE_PER_GB
+
+    # optional ops
+    t = _tier(tier)
+    rates = PRICE_PER_10K_OPS[t]
+    ops_cost = (u.reads/10000.0) * rates["read"] + (u.writes/10000.0) * rates["write"] + (u.other_ops/10000.0) * rates["other"]
+
+    return bw_cost + ops_cost
+
+def estimate_total_month(size_bytes: int, tier: str, usage: Usage) -> dict:
+    cap = estimate_capacity_month(size_bytes, tier)
+    use = estimate_usage_month(tier, usage)
+    return {"capacity": cap, "usage": use, "total": cap + use}

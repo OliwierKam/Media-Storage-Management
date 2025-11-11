@@ -1,53 +1,133 @@
+<!DOCTYPE html>
 <html>
     <head>
         <title></title>
         <!-- Basic Styling -->
         <style>
             body {
-                font-family: Arial, sans-serif;
-                margin: 30px;
-                background-color: #fafafa;
+                font-family: Arial,
+                sans-serif; margin: 30px;
+                background: #fafafa;
             }
             table {
                 border-collapse: collapse;
-                width: 60%;
-                background: white;
+                background: #fff; width: 70%;
             }
             th, td {
-                border: 1px solid #ccc;
-                padding: 10px 15px;
+                border: 1px solid #ddd;
+                padding: 10px 14px;
                 text-align: left;
+                vertical-align: top;
             }
             th {
-                background-color: #f2f2f2;
-                width: 200px;
+                background: #f5f5f5;
+                width: 260px;
             }
-            h3 {
-                font-size: 20px;
-                margin-bottom: 10px;
+            h2 {
+                margin-bottom: 8px;
+            }
+            .small {
+                color: #666;
+                font-size: 12px;
+            }
+            .mono {
+                font-family: Consolas, Menlo, monospace;
             }
         </style>
     </head>
+
     <body>
-        <!--
-        {% if blob %}
-            <h3>{{ blob.name }}</h3>
+        <h2>Blob: <span class="mono">{{ blob_name }}</span></h2>
+        <div class="small">Container: <span class="mono">{{ container_name }}</span></div>
+        <br>
 
-            <table>
-                <tr><th>Container</th><td>{{ container.name }}</td></tr>
-                <tr><th>Size</th><td>{{ blob.size|filesizeformat }}</td></tr>
-                <tr><th>Tier</th><td>{{ blob.blob_tier }}</td></tr>
-                <tr><th>Last Modified</th><td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td></tr>
-                <tr><th>Last Accessed</th><td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td></tr>
-                <tr><th>Created On</th><td>{{ blob.creation_time|date:"d-m-Y H:i"|default:"—" }}</td></tr>
-            </table>
-        {% endif %}
-        -->
+        <table>
+            <tr><th colspan="2">Identity</th></tr>
+            <tr>
+                <th>Container</th>
+                <td class="mono">{{ container_name }}</td>
+            </tr>
+            <tr>
+                <th>Blob name</th>
+                <td class="mono">{{ blob_name }}</td>
+            </tr>
 
-        Perhaps put more information here about the blob?
+            <tr><th colspan="2">Timestamps</th></tr>
+            <tr>
+                <th>Last modified</th>
+                <td>{{ last_modified|date:"d-m-Y H:i:s"|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Last accessed (Azure)</th>
+                <td>{{ last_accessed_on|date:"d-m-Y H:i:s"|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Created on</th>
+                <td>{{ creation_time|date:"d-m-Y H:i:s"|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Days since access</th>
+                <td>{% if days_since_access is not None %}{{ days_since_access }} days{% else %}—{% endif %}</td>
+            </tr>
+            <tr>
+                <th>Usage bucket</th>
+                <td>{{ usage_bucket }}</td>
+            </tr>
 
-        <br><br>
+            <tr><th colspan="2">Size & Tier</th></tr>
+            <tr>
+                <th>Size (bytes)</th>
+                <td class="mono">{{ size_bytes }}</td>
+            </tr>
+            <tr>
+                <th>Size (GB)</th>
+                <td class="mono">{{ size_gb|floatformat:8 }}</td>
+            </tr>
+            <tr>
+                <th>Tier (raw from Azure)</th>
+                <td class="mono">{{ tier_raw }}</td>
+            </tr>
+            <tr>
+                <th>Tier (normalized)</th>
+                <td class="mono">{{ tier_norm }}</td>
+            </tr>
 
+            <tr><th colspan="2">Pricing Inputs</th></tr>
+            <tr>
+                <th>Unit price (£ / GB·month)</th>
+                <td class="mono">£{{ unit_price }}</td>
+            </tr>
+
+            <tr><th colspan="2">Usage Inputs (MVP placeholders)</th></tr>
+            <tr>
+                <th>Egress (GB)</th>
+                <td class="mono">{{ usage_egress_gb|floatformat:6 }}</td>
+            </tr>
+            <tr>
+                <th>Ingress (GB)</th>
+                <td class="mono">{{ usage_ingress_gb|floatformat:6 }}</td>
+            </tr>
+            <tr>
+                <th>Reads / Writes / Other ops</th>
+                <td class="mono">{{ usage_reads }} / {{ usage_writes }} / {{ usage_other_ops }}</td>
+            </tr>
+
+            <tr><th colspan="2">Estimates</th></tr>
+            <tr>
+                <th>Est. Capacity (£/mo)</th>
+                <td class="mono">£{{ est_capacity_month|floatformat:8 }}</td>
+            </tr>
+            <tr>
+                <th>Est. Usage (£/mo)</th>
+                <td class="mono">£{{ est_usage_month|floatformat:8 }}</td>
+            </tr>
+            <tr>
+                <th><b>Est. Total (£/mo)</b></th>
+                <td class="mono"><b>£{{ est_total_month|floatformat:8 }}</b></td>
+            </tr>
+        </table>
+
+        <br>
         <!-- Should work on all browsers -->
         <button onclick="window.history.back()">
             Back

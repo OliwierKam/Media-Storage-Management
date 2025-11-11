@@ -4,7 +4,11 @@ from django.http import HttpResponse
 from django.conf import settings
 from django.contrib import messages
 
+# Django app packages
 from utils import pricing
+
+# Other
+from datetime import datetime, timezone
 
 # Azure imports
 from azure.identity import DefaultAzureCredential
@@ -15,6 +19,8 @@ from azure.core.exceptions import ResourceExistsError, ClientAuthenticationError
 account_url = settings.AZURE_STORAGE_ACCOUNT_URL
 default_credential = DefaultAzureCredential()
 blob_service_client = BlobServiceClient(account_url, credential=default_credential)
+
+# ----- HELPERS -----
 
 # Verifies if container name satisfies Azure requirements
 def check_container_name(container_name):
@@ -34,6 +40,24 @@ def check_container_name(container_name):
         return "No consecutive hyphens."
     
     return None
+
+# Classify usage from Azure's last access time
+def usage_bucket(last_accessed_on):
+    """
+    - <= 30 days: Hot usage
+    - 31–180 days: Cool usage
+    - > 180 days or None: Cold usage
+    """
+    if not last_accessed_on:
+        return "Cold"
+    days = (datetime.now(timezone.utc) - last_accessed_on).days
+    if days <= 30:
+        return "Hot"
+    if days <= 180:
+        return "Cool"
+    return "Cold"
+
+# ----- VIEWS -----
 
 # homepage template
 def homepage(request):
@@ -117,14 +141,22 @@ def homepage(request):
                 blob_list = list(container_client.list_blobs())
                 container = container_client.get_container_properties()
 
-                # Calculate estimate costs
-                for blob in blob_list:
-                    try:
-                        est = pricing.estimate_capacity_month(size_bytes=blob.size, tier=blob.blob_tier)
-                    except Exception:
-                        est = None
-                    # Could also round(est, 4), however with miniscule pricing, the number would be equal to 0.0
-                    setattr(blob, "est_cost_month", None if est is None else est)
+                # Attach MVP cost & usage classification to each blob row
+                for b in blob_list:
+                    # capacity £/mo (size × tier per-GB-month)
+                    cap = pricing.estimate_capacity_month(size_bytes=b.size, tier=b.blob_tier)
+
+                    # usage bucket based on Azure last access time
+                    bucket = usage_bucket(getattr(b, "last_accessed_on", None))
+
+                    # MVP keeps usage £/mo as 0.00 for now; you can change per-bucket add-ons later
+                    usage_cost = 0.0
+
+                    # attach for template
+                    setattr(b, "usage_bucket", bucket)
+                    setattr(b, "est_capacity_month", cap)
+                    setattr(b, "est_usage_month", usage_cost)
+                    setattr(b, "est_total_month", cap + usage_cost)
 
                 context = {
                     'blob_list': blob_list,
@@ -141,19 +173,75 @@ def homepage(request):
         
     return render(request, "homepage.html")
 
+# blob_info template
 def blob_info(request, container, blob):
-    
-    # Get the blob and container client first
+    # Clients
     blob_client = blob_service_client.get_blob_client(container=container, blob=blob)
     container_client = blob_service_client.get_container_client(container)
 
-    # Now get the blob and its properties
-    blob = blob_client.get_blob_properties()
-    container = container_client.get_container_properties()
+    # Properties
+    props = blob_client.get_blob_properties()
+    container_props = container_client.get_container_properties()
+
+    # Tier (prefer blob_tier, fall back to access_tier, default Hot)
+    tier_raw = getattr(props, "blob_tier", None) or getattr(props, "access_tier", None) or "Hot"
+    tier_norm = pricing._tier(tier_raw)
+
+    # Size
+    size_bytes = int(getattr(props, "size", 0))
+    size_gb = size_bytes / pricing.BYTES_PER_GB
+
+    # Pricing & estimates
+    unit_price = pricing.PRICE_PER_GB_MONTH[tier_norm]
+    est_capacity = pricing.estimate_capacity_month(size_bytes=size_bytes, tier=tier_norm)
+
+    # Usage (zeros; still show inputs & bucket)
+    last_accessed = getattr(props, "last_accessed_on", None)
+    days_since_access = None
+    if last_accessed:
+        days_since_access = (datetime.now(timezone.utc) - last_accessed).days
+
+    # reuse usage_bucket helper already defined above
+    bucket = usage_bucket(last_accessed)
+
+    usage = pricing.Usage(egress_gb=0.0, ingress_gb=0.0, reads=0, writes=0, other_ops=0)
+    est_usage = pricing.estimate_usage_month(tier_norm, usage)
+    est_total = est_capacity + est_usage
 
     context = {
-        "blob": blob,
-        "container": container
+        # original context
+        "blob": props,
+        "container": container_props,
+
+        # ids
+        "blob_name": blob,
+        "container_name": container,
+
+        # debug/raw inputs
+        "tier_raw": tier_raw,
+        "tier_norm": tier_norm,
+        "size_bytes": size_bytes,
+        "size_gb": size_gb,
+        "unit_price": unit_price,
+
+        # timestamps
+        "last_modified": getattr(props, "last_modified", None),
+        "last_accessed_on": last_accessed,
+        "creation_time": getattr(props, "creation_time", None),
+        "days_since_access": days_since_access,
+        "usage_bucket": bucket,
+
+        # usage inputs (kept at zero for MVP but visible)
+        "usage_egress_gb": usage.egress_gb,
+        "usage_ingress_gb": usage.ingress_gb,
+        "usage_reads": usage.reads,
+        "usage_writes": usage.writes,
+        "usage_other_ops": usage.other_ops,
+
+        # estimates
+        "est_capacity_month": est_capacity,
+        "est_usage_month": est_usage,
+        "est_total_month": est_total,
     }
 
     return render(request, "blob_info.html", context)
