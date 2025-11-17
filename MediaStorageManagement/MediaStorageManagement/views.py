@@ -1,7 +1,7 @@
 # views.py
 
 # Django imports
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.conf import settings
 from django.contrib import messages
 from django.urls import reverse
@@ -15,7 +15,12 @@ from utils import mock_usage
 # Azure imports
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
-from azure.core.exceptions import ResourceExistsError, ClientAuthenticationError, HttpResponseError, ResourceNotFoundError
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ClientAuthenticationError,
+    HttpResponseError,
+    ResourceNotFoundError,
+)
 
 # Authorise access to data in azure
 account_url = settings.AZURE_STORAGE_ACCOUNT_URL
@@ -45,26 +50,188 @@ def check_container_name(container_name):
     return None
 
 
+# Change tier for a single blob
+def change_blob_tier(container_name: str, blob_name: str, new_tier: str):
+    blob_client = blob_service_client.get_blob_client(
+        container=container_name,
+        blob=blob_name,
+    )
+    blob_client.set_standard_blob_tier(new_tier)
+
+
+# Annotate a blob object with usage + cost + suggested tier
+def annotate_blob_with_costs(container_name, blob_obj):
+    # capacity estimate for this blob (using its current tier)
+    cap = pricing.estimate_capacity_month(size_bytes=blob_obj.size, tier=blob_obj.blob_tier)
+
+    # mock reads in last 30 days
+    _last_30, total_30, _hist_30 = mock_usage.get_mock_access_window(
+        container_name=container_name,
+        blob_name=blob_obj.name,
+        window_days=30,
+    )
+
+    # mock reads in last 180 days
+    _last_180, total_180, _hist_180 = mock_usage.get_mock_access_window(
+        container_name=container_name,
+        blob_name=blob_obj.name,
+        window_days=180,
+    )
+
+    # mock reads in last 365 days (for display)
+    _last_365, total_365, _hist_365 = mock_usage.get_mock_access_window(
+        container_name=container_name,
+        blob_name=blob_obj.name,
+        window_days=365,
+    )
+
+    # mock reads across full available history for cost decision
+    _last_all, total_all, _hist_all = mock_usage.get_mock_access_window(
+        container_name=container_name,
+        blob_name=blob_obj.name,
+        window_days=mock_usage.MAX_HISTORY_DAYS,
+    )
+
+    # use full-history reads for cost comparison
+    reads_for_cost = total_all
+
+    # read operation cost based on full-history reads
+    read_cost = pricing.estimate_read_cost_month(
+        reads_count=reads_for_cost,
+        tier=blob_obj.blob_tier,
+    )
+
+    # total estimated cost = capacity + read operations (current tier)
+    total_cost = cap + read_cost
+
+    # find optimal tier based on size and full-history reads
+    opt_tier, opt_total, _per_tier = pricing.find_optimal_tier(
+        size_bytes=blob_obj.size,
+        reads_count=reads_for_cost,
+    )
+
+    # potential saving if moved to optimal tier
+    opt_saving = total_cost - opt_total
+
+    # attach values for template
+    setattr(blob_obj, "access_30d", total_30)
+    setattr(blob_obj, "access_180d", total_180)
+    setattr(blob_obj, "access_365d", total_365)
+    setattr(blob_obj, "est_capacity_month", cap)
+    setattr(blob_obj, "est_read_month", read_cost)
+    setattr(blob_obj, "est_total_month", total_cost)
+    setattr(blob_obj, "opt_tier", opt_tier)
+    setattr(blob_obj, "opt_total_month", opt_total)
+    setattr(blob_obj, "opt_saving_month", opt_saving)
+
+
 # ----- VIEWS -----
 
 
-# homepage template
 def homepage(request):
-    # Handle POST actions (create/upload) and let listing flow through to GET for paging
+    # Handle POST actions (create/upload/change tiers)
     if request.method == "POST":
+
+        # Single blob: apply suggested tier
+        if "apply_tier_single" in request.POST:
+            container_name = request.POST.get("container_name", "").strip()
+            blob_name = request.POST.get("blob_name", "")
+            target_tier = request.POST.get("target_tier", "")
+
+            # listing parameters to restore view
+            prefix = request.POST.get("prefix", "").strip()
+            page_size = request.POST.get("page_size", "").strip()
+            page_num = request.POST.get("page_num", "").strip()
+
+            error = check_container_name(container_name)
+            if error:
+                messages.error(request, error)
+            elif not blob_name or not target_tier:
+                messages.error(request, "Missing blob name or target tier.")
+            else:
+                try:
+                    change_blob_tier(container_name, blob_name, target_tier)
+                except ResourceNotFoundError:
+                    messages.error(request, "Blob or container not found while changing tier.")
+                except ClientAuthenticationError:
+                    messages.error(request, "Not authorized. Check Azure login.")
+                except HttpResponseError:
+                    messages.error(request, "Unexpected Azure error while changing tier.")
+                else:
+                    messages.success(request, f"Tier for '{blob_name}' changed to {target_tier}.")
+
+            # redirect back to the same listing (PRG pattern)
+            params = {"container_name": container_name}
+            if prefix:
+                params["prefix"] = prefix
+            if page_size:
+                params["page_size"] = page_size
+            if page_num:
+                params["p"] = page_num
+
+            url = reverse("homepage")
+            if params:
+                url = f"{url}?{urlencode(params)}"
+            return redirect(url)
+
+        # Bulk apply from popup
+        if "apply_tier_bulk" in request.POST:
+            container_name = request.POST.get("container_name", "").strip()
+
+            # listing parameters to restore view
+            prefix = request.POST.get("prefix", "").strip()
+            page_size = request.POST.get("page_size", "").strip()
+            page_num = request.POST.get("page_num", "").strip()
+
+            error = check_container_name(container_name)
+            if error:
+                messages.error(request, error)
+            else:
+                selected_items = request.POST.getlist("items")  # each "blob_name|tier"
+                changed = 0
+
+                for item in selected_items:
+                    try:
+                        blob_name, target_tier = item.split("|", 1)
+                    except ValueError:
+                        continue
+
+                    try:
+                        change_blob_tier(container_name, blob_name, target_tier)
+                        changed += 1
+                    except ResourceNotFoundError:
+                        messages.error(request, f"{blob_name}: blob not found while changing tier.")
+                    except ClientAuthenticationError:
+                        messages.error(request, f"{blob_name}: not authorized while changing tier.")
+                    except HttpResponseError:
+                        messages.error(request, f"{blob_name}: Azure error while changing tier.")
+
+                if changed > 0:
+                    messages.success(request, f"Applied tier changes to {changed} blobs.")
+
+            # redirect back to same listing
+            params = {"container_name": container_name}
+            if prefix:
+                params["prefix"] = prefix
+            if page_size:
+                params["page_size"] = page_size
+            if page_num:
+                params["p"] = page_num
+
+            url = reverse("homepage")
+            if params:
+                url = f"{url}?{urlencode(params)}"
+            return redirect(url)
 
         # Check container creation
         if "create_container" in request.POST:
             container_name = request.POST.get('container_name')
 
-            # Check validiy of name
             error = check_container_name(container_name)
-
             if error:
                 messages.error(request, error)
                 return render(request, "homepage.html")
             
-            # Try to create the container if check passes
             try:
                 blob_service_client.create_container(container_name)
             except ResourceExistsError:
@@ -78,9 +245,8 @@ def homepage(request):
             return render(request, "homepage.html")
             
         # Check blob upload
-        elif "upload_blob" in request.POST:
+        if "upload_blob" in request.POST:
 
-            # Check for file
             if "blob_file" not in request.FILES:
                 messages.error(request, "Select a file to upload.")
                 return render(request, "homepage.html")
@@ -89,17 +255,13 @@ def homepage(request):
             blob_name = blob_file.name
             container_name = request.POST.get("container_name")
 
-            # Check validiy of name
             error = check_container_name(container_name)
-
             if error:
                 messages.error(request, error)
                 return render(request, "homepage.html")
             
-            # Create a blob client using the file name as the name for the blob
             blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
 
-            # Try to upload blob
             try:
                 blob_client.upload_blob(blob_file, overwrite=True)
             except ResourceNotFoundError:
@@ -118,7 +280,6 @@ def homepage(request):
 
         # Check validiy of name
         error = check_container_name(container_name)
-
         if error:
             messages.error(request, error)
             return render(request, "homepage.html")
@@ -162,70 +323,13 @@ def homepage(request):
                 page_obj = paginator.page(paginator.num_pages)
                 p = paginator.num_pages
 
+            suggestions = []
+
             # Annotate only current page rows
             for b in page_obj.object_list:
-                # capacity estimate for this blob (using its current tier)
-                cap = pricing.estimate_capacity_month(size_bytes=b.size, tier=b.blob_tier)
-
-                # mock reads in last 30 days
-                _last_30, total_30, _hist_30 = mock_usage.get_mock_access_window(
-                    container_name=container_name,
-                    blob_name=b.name,
-                    window_days=30,
-                )
-
-                # mock reads in last 180 days
-                _last_180, total_180, _hist_180 = mock_usage.get_mock_access_window(
-                    container_name=container_name,
-                    blob_name=b.name,
-                    window_days=180,
-                )
-
-                # mock reads in last 365 days (for display)
-                _last_365, total_365, _hist_365 = mock_usage.get_mock_access_window(
-                    container_name=container_name,
-                    blob_name=b.name,
-                    window_days=365,
-                )
-
-                # mock reads across full available history for cost decision
-                _last_all, total_all, _hist_all = mock_usage.get_mock_access_window(
-                    container_name=container_name,
-                    blob_name=b.name,
-                    window_days=mock_usage.MAX_HISTORY_DAYS,
-                )
-
-                # use full-history reads for cost comparison
-                reads_for_cost = total_all
-
-                # read operation cost based on full-history reads
-                read_cost = pricing.estimate_read_cost_month(
-                    reads_count=reads_for_cost,
-                    tier=b.blob_tier,
-                )
-
-                # total estimated cost = capacity + read operations (current tier)
-                total_cost = cap + read_cost
-
-                # find optimal tier based on size and full-history reads
-                opt_tier, opt_total, _per_tier = pricing.find_optimal_tier(
-                    size_bytes=b.size,
-                    reads_count=reads_for_cost,
-                )
-
-                # potential saving if moved to optimal tier
-                opt_saving = total_cost - opt_total
-
-                # attach values for template
-                setattr(b, "access_30d", total_30)
-                setattr(b, "access_180d", total_180)
-                setattr(b, "access_365d", total_365)
-                setattr(b, "est_capacity_month", cap)
-                setattr(b, "est_read_month", read_cost)
-                setattr(b, "est_total_month", total_cost)
-                setattr(b, "opt_tier", opt_tier)
-                setattr(b, "opt_total_month", opt_total)      # <- NEW: total if moved
-                setattr(b, "opt_saving_month", opt_saving)
+                annotate_blob_with_costs(container_name, b)
+                if getattr(b, "opt_tier", None) and b.opt_tier != b.blob_tier:
+                    suggestions.append(b)
 
             # Build Prev/Next URLs (short; no tokens)
             base_params = {
@@ -260,6 +364,9 @@ def homepage(request):
                 'next_url': next_url,
                 'has_next': page_obj.has_next(),
                 'paginator': paginator,
+
+                # suggested changes (for popup)
+                'suggestions': suggestions,
             }
 
             return render(request, "homepage.html", context)
@@ -273,7 +380,6 @@ def homepage(request):
     return render(request, "homepage.html")
 
 
-# blob_info template
 def blob_info(request, container, blob):
     # Clients
     blob_client = blob_service_client.get_blob_client(container=container, blob=blob)
@@ -326,7 +432,7 @@ def blob_info(request, container, blob):
         tier=tier_norm,
     )
 
-    # total cost = capacity + reads (current tier)
+    # total cost = capacity + reads
     est_total = est_capacity + est_read_month
 
     # optimal tier and cost based on size + full-history reads

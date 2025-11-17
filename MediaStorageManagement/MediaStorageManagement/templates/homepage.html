@@ -16,13 +16,22 @@
             }
             th, td {
                 border: 1px solid #ccc;
-                padding: 10px 15px;
+                padding: 20px 15px;   /* more vertical padding = taller rows */
                 text-align: left;
+                vertical-align: middle;
             }
             th {
-                background-color: #f2f2f2;
+                background-color: #f2f2f2; /* header stays obvious */
                 width: 200px;
             }
+            /* darker zebra striping on data rows only */
+            table tbody tr:nth-child(odd) {
+                background-color: #ffffff;
+            }
+            table tbody tr:nth-child(even) {
+                background-color: #f0f0f0;
+            }
+
             h3 {
                 font-size: 20px;
                 margin-bottom: 10px;
@@ -30,6 +39,32 @@
             .controls { margin-bottom: 6px; }
             .controls input[type="text"] { width: 260px; }
             .muted { color:#666; font-size:12px; }
+
+            /* Simple modal styles */
+            .modal-backdrop {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.4);
+                z-index: 1000;
+            }
+            .modal {
+                background: #fff;
+                padding: 20px;
+                margin: 60px auto;
+                width: 80%;
+                max-width: 900px;
+                border-radius: 4px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            }
+            .modal-close {
+                float: right;
+                cursor: pointer;
+                font-weight: bold;
+            }
         </style>
     </head>
     <body>
@@ -95,49 +130,79 @@
         
         <!-- Lists blobs on request -->
         {% if blob_list %}
+            <!-- Button to open popup with suggested changes -->
+            {% if suggestions and suggestions|length > 0 %}
+                <div class="controls">
+                    <button type="button" id="open-suggestions">
+                        Show suggested tier changes ({{ suggestions|length }})
+                    </button>
+                </div>
+            {% endif %}
+
             <table>
                 <h3>
                     Listing blobs in {{ container.name }}
                     {% if prefix %}<span class="muted">(prefix: {{ prefix }})</span>{% endif %}
                 </h3>
-                <tr>
-                    <th>Blob Name</th>
-                    <th>Size</th>
-                    <th>Tier</th>
-                    <th>Last Modified</th>
-                    <th>Reads (30 days)</th>
-                    <th>Reads (180 days)</th>
-                    <th>Reads (365 days)</th>
-                    <th>Est. Capacity £/mo</th>
-                    <th>Est. Read Ops £/mo</th>
-                    <th>Est. Total £/mo (Current)</th>
-                    <th>Optimal Tier</th>
-                    <th>Est. Total £/mo (Optimal)</th>
-                    <th>Potential Saving £/mo</th>
-                </tr>
-                {% for blob in blob_list %}
+                <thead>
                     <tr>
-                        <td><b><a href="{% url 'blob_info' container.name blob.name %}">{{ blob.name }}</a></b></td>
-                        <td>{{ blob.size|filesizeformat }}</td>
-                        <td>{{ blob.blob_tier }}</td>
-                        <td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td>
-                        <td>{{ blob.access_30d }}</td>
-                        <td>{{ blob.access_180d }}</td>
-                        <td>{{ blob.access_365d }}</td>
-                        <td>£{{ blob.est_capacity_month|floatformat:8 }}</td>
-                        <td>£{{ blob.est_read_month|floatformat:8 }}</td>
-                        <td><b>£{{ blob.est_total_month|floatformat:8 }}</b></td>
-                        <td>{{ blob.opt_tier }}</td>
-                        <td>£{{ blob.opt_total_month|floatformat:8 }}</td>
-                        <td>
-                            {% if blob.opt_saving_month > 0 %}
-                                £{{ blob.opt_saving_month|floatformat:8 }}
-                            {% else %}
-                                —
-                            {% endif %}
-                        </td>
+                        <th>Blob Name</th>
+                        <th>Size</th>
+                        <th>Tier</th>
+                        <th>Reads (30 days)</th>
+                        <th>Reads (180 days)</th>
+                        <th>Reads (365 days)</th>
+                        <th>Est. Capacity £/mo</th>
+                        <th>Est. Read Ops £/mo</th>
+                        <th>Est. Total £/mo (Current)</th>
+                        <th>Optimal Tier</th>
+                        <th>Est. Total £/mo (Optimal)</th>
+                        <th>Potential Saving £/mo</th>
+                        <th>Actions</th>
                     </tr>
-                {% endfor %}
+                </thead>
+                <tbody>
+                    {% for blob in blob_list %}
+                        <tr>
+                            <td><b><a href="{% url 'blob_info' container.name blob.name %}">{{ blob.name }}</a></b></td>
+                            <td>{{ blob.size|filesizeformat }}</td>
+                            <td>{{ blob.blob_tier }}</td>
+                            <td>{{ blob.access_30d }}</td>
+                            <td>{{ blob.access_180d }}</td>
+                            <td>{{ blob.access_365d }}</td>
+                            <td>£{{ blob.est_capacity_month|floatformat:8 }}</td>
+                            <td>£{{ blob.est_read_month|floatformat:8 }}</td>
+                            <td><b>£{{ blob.est_total_month|floatformat:8 }}</b></td>
+                            <td>{{ blob.opt_tier }}</td>
+                            <td>£{{ blob.opt_total_month|floatformat:8 }}</td>
+                            <td>
+                                {% if blob.opt_saving_month > 0 %}
+                                    £{{ blob.opt_saving_month|floatformat:8 }}
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if blob.opt_tier and blob.opt_tier != blob.blob_tier %}
+                                    <form action="{% url 'homepage' %}" method="post" style="display:inline;">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="container_name" value="{{ container_name }}">
+                                        <input type="hidden" name="prefix" value="{{ prefix }}">
+                                        <input type="hidden" name="page_size" value="{{ page_size }}">
+                                        <input type="hidden" name="page_num" value="{{ page_num }}">
+                                        <input type="hidden" name="blob_name" value="{{ blob.name }}">
+                                        <input type="hidden" name="target_tier" value="{{ blob.opt_tier }}">
+                                        <button type="submit" name="apply_tier_single">
+                                            Apply {{ blob.opt_tier }}
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <span class="muted">No change</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
             </table>
 
             <br>
@@ -171,6 +236,114 @@
             </div>
 
         {% endif %}
+
+        <!-- Modal for suggested changes -->
+        {% if suggestions and suggestions|length > 0 %}
+            <div id="suggestions-backdrop" class="modal-backdrop">
+                <div class="modal">
+                    <span class="modal-close" id="close-suggestions">&times;</span>
+                    <h3>Suggested tier changes (current page)</h3>
+                    <form method="post" action="{% url 'homepage' %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="container_name" value="{{ container_name }}">
+                        <input type="hidden" name="prefix" value="{{ prefix }}">
+                        <input type="hidden" name="page_size" value="{{ page_size }}">
+                        <input type="hidden" name="page_num" value="{{ page_num }}">
+                        <table style="width:100%; margin-top:10px;">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="select-all"></th>
+                                    <th>Blob Name</th>
+                                    <th>Current Tier</th>
+                                    <th>Recommended Tier</th>
+                                    <th>Reads (365 days)</th>
+                                    <th>Current Total £/mo</th>
+                                    <th>Recommended Total £/mo</th>
+                                    <th>Saving £/mo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for blob in suggestions %}
+                                    <tr>
+                                        <td>
+                                            <input type="checkbox"
+                                                   name="items"
+                                                   value="{{ blob.name }}|{{ blob.opt_tier }}">
+                                        </td>
+                                        <td>{{ blob.name }}</td>
+                                        <td>{{ blob.blob_tier }}</td>
+                                        <td>{{ blob.opt_tier }}</td>
+                                        <td>{{ blob.access_365d }}</td>
+                                        <td>£{{ blob.est_total_month|floatformat:8 }}</td>
+                                        <td>£{{ blob.opt_total_month|floatformat:8 }}</td>
+                                        <td>
+                                            {% if blob.opt_saving_month > 0 %}
+                                                £{{ blob.opt_saving_month|floatformat:8 }}
+                                            {% else %}
+                                                —
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+
+                        <div class="controls">
+                            <button type="submit" name="apply_tier_bulk">
+                                Apply selected changes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        {% endif %}
+
+        <script>
+            (function () {
+                var openBtn = document.getElementById("open-suggestions");
+                var closeBtn = document.getElementById("close-suggestions");
+                var backdrop = document.getElementById("suggestions-backdrop");
+
+                if (openBtn && backdrop) {
+                    openBtn.addEventListener("click", function () {
+                        backdrop.style.display = "block";
+                    });
+                }
+                if (closeBtn && backdrop) {
+                    closeBtn.addEventListener("click", function () {
+                        backdrop.style.display = "none";
+                    });
+                }
+                if (backdrop) {
+                    backdrop.addEventListener("click", function (e) {
+                        if (e.target === backdrop) {
+                            backdrop.style.display = "none";
+                        }
+                    });
+                }
+
+                var selectAll = document.getElementById("select-all");
+                if (selectAll) {
+                    selectAll.addEventListener("change", function () {
+                        var checked = this.checked;
+                        var boxes = document.querySelectorAll('input[name="items"]');
+                        boxes.forEach(function (cb) {
+                            cb.checked = checked;
+                        });
+                    });
+                }
+            })();
+
+            // Keep scroll position
+            document.addEventListener("DOMContentLoaded", function(event) { 
+                var scrollpos = localStorage.getItem('scrollpos');
+                if (scrollpos) window.scrollTo(0, scrollpos);
+            });
+
+            window.onbeforeunload = function(e) {
+                localStorage.setItem('scrollpos', window.scrollY);
+            };
+        </script>
 
     </body>
 </html>
