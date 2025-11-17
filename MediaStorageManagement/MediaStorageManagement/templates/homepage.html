@@ -72,13 +72,13 @@
                     <!-- Optional: virtual folder prefix (scales for millions of blobs) -->
                     <input type="text" name="prefix" placeholder="Prefix (e.g. photos/2025/)"
                            value="{{ prefix|default:'' }}">
-                    <span class="muted">Tip: filter by prefix to narrow results.</span>
+                    <span class="muted">Filter by prefix to narrow results.</span>
                 </div>
                 <div class="controls">
                     <input type="number" name="page_size" min="10" max="5000" step="10"
                            placeholder="Page size"
                            value="{{ page_size|default:'100' }}">
-                    <span class="muted">Adjust page size to balance speed and detail.</span>
+                    <span class="muted">Adjust page size.</span>
                 </div>
                 <button type="submit">List</button>
             </form>
@@ -105,10 +105,12 @@
                     <th>Size</th>
                     <th>Tier</th>
                     <th>Last Modified</th>
-                    <th>Last Accessed</th>
-                    <th>Days Since Last Access</th>
-                    <th>Current Usage</th>
+                    <th>Reads (30 days)</th>
+                    <th>Reads (180 days)</th>
+                    <th>Reads (365 days)</th>
                     <th>Est. Capacity £/mo</th>
+                    <th>Est. Read Ops £/mo</th>
+                    <th>Est. Total £/mo</th>
                 </tr>
                 {% for blob in blob_list %}
                     <tr>
@@ -116,17 +118,19 @@
                         <td>{{ blob.size|filesizeformat }}</td>
                         <td>{{ blob.blob_tier }}</td>
                         <td>{{ blob.last_modified|date:"d-m-Y H:i"|default:"—" }}</td>
-                        <td>{{ blob.last_accessed_on|date:"d-m-Y H:i"|default:"—" }}</td>
-                        <td>{{ blob.days_since_access|default_if_none:"—" }}</td>
-                        <td>{{ blob.usage_bucket }}</td>
+                        <td>{{ blob.access_30d }}</td>
+                        <td>{{ blob.access_180d }}</td>
+                        <td>{{ blob.access_365d }}</td>
                         <td>£{{ blob.est_capacity_month|floatformat:8 }}</td>
+                        <td>£{{ blob.est_read_month|floatformat:8 }}</td>
+                        <td><b>£{{ blob.est_total_month|floatformat:8 }}</b></td>
                     </tr>
                 {% endfor %}
             </table>
 
             <br>
 
-            <!-- Paging (Azure continuation-token based; URLs stay short -->
+            <!-- Paging (Django Paginator) -->
             <div class="controls">
                 {% if prev_url %}
                     <a href="{{ prev_url }}">← Previous</a>
@@ -135,7 +139,16 @@
                 {% endif %}
 
                 <span class="muted" style="margin:0 10px;">
-                    Page {{ page_num }}{% if has_next is not None %}{% if not has_next %} (end){% endif %}{% endif %}
+                    Page {{ page_num }}
+                    {% if paginator %}
+                        of {{ paginator.num_pages }}
+                    {% endif %}
+                    
+                    {% if has_next is not None %}
+                        {% if not has_next %} 
+                            (end)
+                        {% endif %}
+                    {% endif %}
                 </span>
 
                 {% if next_url %}

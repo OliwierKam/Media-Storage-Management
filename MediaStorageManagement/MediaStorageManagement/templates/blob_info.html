@@ -63,26 +63,23 @@
                 <td>{{ last_modified|date:"d-m-Y H:i:s"|default:"—" }}</td>
             </tr>
             <tr>
-                <th>Last accessed (Azure)</th>
-                <td>{{ last_accessed_on|date:"d-m-Y H:i:s"|default:"—" }}</td>
-            </tr>
-            <tr>
                 <th>Created on</th>
                 <td>{{ creation_time|date:"d-m-Y H:i:s"|default:"—" }}</td>
             </tr>
+
+            <!-- Mock Access (Reads) -->
+            <tr><th colspan="2">Reads (Mocked Usage)</th></tr>
             <tr>
-                <th>Days since last access</th>
-                <td>
-                    {% if days_since_access is not None %}
-                        {{ days_since_access }} days
-                    {% else %}
-                        —
-                    {% endif %}
-                </td>
+                <th>Reads (last 30 days)</th>
+                <td class="mono">{{ access_30d }}</td>
             </tr>
             <tr>
-                <th>Usage bucket</th>
-                <td>{{ usage_bucket }}</td>
+                <th>Reads (last 180 days)</th>
+                <td class="mono">{{ access_180d }}</td>
+            </tr>
+            <tr>
+                <th>Reads (last 365 days)</th>
+                <td class="mono">{{ access_365d }}</td>
             </tr>
 
             <!-- Size & Tier -->
@@ -131,6 +128,10 @@
             <tr>
                 <th>Est. Capacity (£/mo)</th>
                 <td class="mono">£{{ est_capacity_month|floatformat:8 }}</td>
+            </tr>
+            <tr>
+                <th>Est. Read Ops (£/mo)</th>
+                <td class="mono">£{{ est_read_month|floatformat:8 }}</td>
             </tr>
             <tr>
                 <th><b>Est. Total (£/mo)</b></th>

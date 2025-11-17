@@ -3,13 +3,12 @@ from django.shortcuts import render
 from django.conf import settings
 from django.contrib import messages
 from django.urls import reverse
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from urllib.parse import urlencode
 
 # Django app packages
 from utils import pricing, changefeed
-
-# Other
-from datetime import datetime, timezone
+from utils import mock_usage
 
 # Azure imports
 from azure.identity import DefaultAzureCredential
@@ -42,53 +41,6 @@ def check_container_name(container_name):
     
     return None
 
-# Classify usage from Azure's last access time
-def usage_bucket(last_accessed_on):
-    """
-    - <= 30 days: Hot usage
-    - 31–180 days: Cool usage
-    - > 180 days or None: Cold usage
-    """
-    if not last_accessed_on:
-        return "Cold"
-    days = (datetime.now(timezone.utc) - last_accessed_on).days
-    if days <= 30:
-        return "Hot"
-    if days <= 180:
-        return "Cool"
-    return "Cold"
-
-# Page blobs efficiently with continuation tokens
-def list_blobs_page(container_client, prefix: str | None, continuation_token: str | None, page_size: int = 100):
-    pager = container_client.list_blobs(
-        name_starts_with=prefix or None,
-        results_per_page=page_size,
-    ).by_page(continuation_token)
-    page = next(pager, [])
-    blobs = list(page)
-    next_token = pager.continuation_token  # None if no more pages
-    return blobs, next_token
-
-# Build a short key that identifies a paging universe for session storage
-def _page_key(container_name: str, prefix: str | None, page_size: int) -> str:
-    # small normalized key to partition token stacks
-    return f"{container_name}||{prefix or ''}||{page_size}"
-
-# Ensure a token stack exists in session for this key
-def _get_stack(request, key: str):
-    stacks = request.session.get("ct_stacks", {})
-    stack = stacks.get(key)
-    if stack is None:
-        stack = [""]  # page 1 start marker (token for first page is empty/None)
-        stacks[key] = stack
-        request.session["ct_stacks"] = stacks
-    return stack
-
-def _set_stack(request, key: str, stack):
-    stacks = request.session.get("ct_stacks", {})
-    stacks[key] = stack
-    request.session["ct_stacks"] = stacks
-
 # ----- VIEWS -----
 
 # homepage template
@@ -112,7 +64,7 @@ def homepage(request):
                 blob_service_client.create_container(container_name)
             except ResourceExistsError:
                 messages.info(request, f"Container '{container_name}' already exists.")
-            except ClientAuthenticationError: # Pops if changes aren't authenticated.
+            except ClientAuthenticationError:  # Pops if changes aren't authenticated.
                 messages.error(request, "Not authorized. Check Azure login.")
             except HttpResponseError:
                 messages.error(request, "Unexpected Azure error while creating the container.")
@@ -155,7 +107,7 @@ def homepage(request):
                 messages.success(request, f"Uploaded '{blob_name}' to '{container_name}'.")
             return render(request, "homepage.html")
 
-    # Scalable listing via GET (Azure-native cursor paging; session-backed prev/next)
+    # Scalable listing via GET (now using Django Paginator)
     if request.method == "GET" and ("container_name" in request.GET):
         container_name = request.GET.get("container_name", "").strip()
 
@@ -183,44 +135,72 @@ def homepage(request):
         if p < 1:
             p = 1
 
-        key = _page_key(container_name, prefix, page_size)
-        stack = _get_stack(request, key)
-
-        # If this is a new query (first arrival without explicit p) reset stack
-        if "container_name" in request.GET and "p" not in request.GET:
-            stack = [""]  # reset to start
-            _set_stack(request, key, stack)
-
-        # If navigating forward beyond known tokens, we step from last known token
-        current_index = min(p - 1, len(stack) - 1)
-        start_token = stack[current_index] or None
-
         container_client = blob_service_client.get_container_client(container=container_name)
 
         try:
-            # Fetch ONE Azure page starting at start_token
-            blob_list, next_ct = list_blobs_page(container_client, prefix, start_token, page_size=page_size)
+            # Container props for heading
             container = container_client.get_container_properties()
 
-            # If we navigated to a new page (exactly one past the end of known stack) and Azure gave next_ct, append it
-            if (p == len(stack)) and next_ct:
-                stack.append(next_ct or "")
-                _set_stack(request, key, stack)
+            # Get all blobs (optionally filtered by prefix)
+            blob_iter = container_client.list_blobs(name_starts_with=prefix or None)
+            blob_list_all = list(blob_iter)
+
+            # Simple paginator
+            paginator = Paginator(blob_list_all, page_size)
+
+            try:
+                page_obj = paginator.page(p)
+            except PageNotAnInteger:
+                page_obj = paginator.page(1)
+                p = 1
+            except EmptyPage:
+                page_obj = paginator.page(paginator.num_pages)
+                p = paginator.num_pages
 
             # Annotate only current page rows
-            now_utc = datetime.now(timezone.utc)
-
-            for b in blob_list:
+            for b in page_obj.object_list:
+                # capacity estimate for this blob
                 cap = pricing.estimate_capacity_month(size_bytes=b.size, tier=b.blob_tier)
-                last_acc = getattr(b, "last_accessed_on", None)
-                bucket = usage_bucket(last_acc)
 
-                days_since = (now_utc - last_acc).days if last_acc else None
-                setattr(b, "usage_bucket", bucket)
+                # mock reads in last 30 days (used as "monthly" usage)
+                _last_30, total_30, _hist_30 = mock_usage.get_mock_access_window(
+                    container_name=container_name,
+                    blob_name=b.name,
+                    window_days=30,
+                )
+
+                # mock reads in last 180 days
+                _last_180, total_180, _hist_180 = mock_usage.get_mock_access_window(
+                    container_name=container_name,
+                    blob_name=b.name,
+                    window_days=180,
+                )
+
+                # mock reads in last 365 days
+                _last_365, total_365, _hist_365 = mock_usage.get_mock_access_window(
+                    container_name=container_name,
+                    blob_name=b.name,
+                    window_days=365,
+                )
+
+                # read operation cost per month (based on last 30 days)
+                read_cost = pricing.estimate_read_cost_month(
+                    reads_30_days=total_30,
+                    tier=b.blob_tier,
+                )
+
+                # total estimated cost = capacity + read operations
+                total_cost = cap + read_cost
+
+                # attach values for template
+                setattr(b, "access_30d", total_30)
+                setattr(b, "access_180d", total_180)
+                setattr(b, "access_365d", total_365)
                 setattr(b, "est_capacity_month", cap)
-                setattr(b, "days_since_access", days_since)
+                setattr(b, "est_read_month", read_cost)
+                setattr(b, "est_total_month", total_cost)
 
-            # Build Prev/Next URLs (short; no giant tokens in URL)
+            # Build Prev/Next URLs (short; no tokens)
             base_params = {
                 "container_name": container_name,
                 "page_size": page_size,
@@ -229,29 +209,30 @@ def homepage(request):
                 base_params["prefix"] = prefix
 
             prev_url = None
-            if p > 1:
+            if page_obj.has_previous():
                 params_prev = base_params.copy()
-                params_prev["p"] = p - 1
+                params_prev["p"] = page_obj.previous_page_number()
                 prev_url = f"{reverse('homepage')}?{urlencode(params_prev)}"
 
             next_url = None
-            if next_ct:  # only if Azure says there is a next page
+            if page_obj.has_next():
                 params_next = base_params.copy()
-                params_next["p"] = p + 1
+                params_next["p"] = page_obj.next_page_number()
                 next_url = f"{reverse('homepage')}?{urlencode(params_next)}"
 
             context = {
-                'blob_list': blob_list,
+                'blob_list': page_obj.object_list,
                 'container': container,
                 'container_name': container_name,
                 'prefix': (prefix or ""),
                 'page_size': page_size,
 
                 # paging UI
-                'page_num': p,
+                'page_num': page_obj.number,
                 'prev_url': prev_url,
                 'next_url': next_url,
-                'has_next': bool(next_ct),
+                'has_next': page_obj.has_next(),
+                'paginator': paginator,
             }
 
             return render(request, "homepage.html", context)
@@ -286,10 +267,31 @@ def blob_info(request, container, blob):
     # Capacity estimate (£/mo)
     est_capacity = pricing.estimate_capacity_month(size_bytes=size_bytes, tier=tier_norm)
 
-    # Usage bucket from Azure Last Access Time
-    last_accessed = getattr(props, "last_accessed_on", None)
-    days_since_access = (datetime.now(timezone.utc) - last_accessed).days if last_accessed else None
-    bucket = usage_bucket(last_accessed)
+    # mock reads in last 30/180/365 days
+    _last_30, total_30, _hist_30 = mock_usage.get_mock_access_window(
+        container_name=container,
+        blob_name=blob,
+        window_days=30,
+    )
+    _last_180, total_180, _hist_180 = mock_usage.get_mock_access_window(
+        container_name=container,
+        blob_name=blob,
+        window_days=180,
+    )
+    _last_365, total_365, _hist_365 = mock_usage.get_mock_access_window(
+        container_name=container,
+        blob_name=blob,
+        window_days=365,
+    )
+
+    # read operation cost per month (based on last 30 days)
+    est_read_month = pricing.estimate_read_cost_month(
+        reads_30_days=total_30,
+        tier=tier_norm,
+    )
+
+    # total cost = capacity + reads
+    est_total = est_capacity + est_read_month
 
     # Azure Change Feed write-side counts (create/overwrite/metadata/tier/delete)
     try:
@@ -297,12 +299,10 @@ def blob_info(request, container, blob):
             account_url=settings.AZURE_STORAGE_ACCOUNT_URL,
             container=container,
             blob_path=blob,
-            days=30, # adjust the window of days for lookback.
+            days=30,
         )
     except Exception:
         change_counts = {"created": "—", "updated": "—", "deleted": "—"}
-
-    est_total = est_capacity
 
     context = {
         # original objects
@@ -313,12 +313,9 @@ def blob_info(request, container, blob):
         "blob_name": blob,
         "container_name": container,
 
-        # timestamps / usage label
+        # timestamps
         "last_modified": getattr(props, "last_modified", None),
-        "last_accessed_on": last_accessed,
         "creation_time": getattr(props, "creation_time", None),
-        "days_since_access": days_since_access,
-        "usage_bucket": bucket,
 
         # size & tier & pricing inputs
         "size_bytes": size_bytes,
@@ -334,7 +331,13 @@ def blob_info(request, container, blob):
 
         # estimates (£/mo)
         "est_capacity_month": est_capacity,
+        "est_read_month": est_read_month,
         "est_total_month": est_total,
+
+        # mock read counts
+        "access_30d": total_30,
+        "access_180d": total_180,
+        "access_365d": total_365,
     }
 
     return render(request, "blob_info.html", context)
