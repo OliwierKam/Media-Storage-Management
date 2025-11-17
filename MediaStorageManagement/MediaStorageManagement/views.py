@@ -1,3 +1,5 @@
+# views.py
+
 # Django imports
 from django.shortcuts import render
 from django.conf import settings
@@ -7,7 +9,7 @@ from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from urllib.parse import urlencode
 
 # Django app packages
-from utils import pricing, changefeed
+from utils import pricing
 from utils import mock_usage
 
 # Azure imports
@@ -21,6 +23,7 @@ default_credential = DefaultAzureCredential()
 blob_service_client = BlobServiceClient(account_url, credential=default_credential)
 
 # ----- HELPERS -----
+
 
 # Verifies if container name satisfies Azure requirements
 def check_container_name(container_name):
@@ -41,7 +44,9 @@ def check_container_name(container_name):
     
     return None
 
+
 # ----- VIEWS -----
+
 
 # homepage template
 def homepage(request):
@@ -245,6 +250,7 @@ def homepage(request):
         
     return render(request, "homepage.html")
 
+
 # blob_info template
 def blob_info(request, container, blob):
     # Clients
@@ -293,17 +299,6 @@ def blob_info(request, container, blob):
     # total cost = capacity + reads
     est_total = est_capacity + est_read_month
 
-    # Azure Change Feed write-side counts (create/overwrite/metadata/tier/delete)
-    try:
-        change_counts = changefeed.get_write_counts_for_blob(
-            account_url=settings.AZURE_STORAGE_ACCOUNT_URL,
-            container=container,
-            blob_path=blob,
-            days=30,
-        )
-    except Exception:
-        change_counts = {"created": "—", "updated": "—", "deleted": "—"}
-
     context = {
         # original objects
         "blob": props,
@@ -323,11 +318,6 @@ def blob_info(request, container, blob):
         "tier_raw": tier_raw,
         "tier_norm": tier_norm,
         "unit_price": unit_price,
-
-        # change feed counts
-        "cf_created": change_counts["created"],
-        "cf_updated": change_counts["updated"],
-        "cf_deleted": change_counts["deleted"],
 
         # estimates (£/mo)
         "est_capacity_month": est_capacity,
