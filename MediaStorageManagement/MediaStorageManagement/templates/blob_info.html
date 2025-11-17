@@ -119,8 +119,29 @@
                 <td class="mono">£{{ est_read_month|floatformat:8 }}</td>
             </tr>
             <tr>
-                <th><b>Est. Total (£/mo)</b></th>
+                <th><b>Est. Total (£/mo) – Current Tier ({{ tier_norm }})</b></th>
                 <td class="mono"><b>£{{ est_total_month|floatformat:8 }}</b></td>
+            </tr>
+
+            <!-- Optimal tier suggestion -->
+            <tr><th colspan="2">Optimal Tier Suggestion (Cost-Based)</th></tr>
+            <tr>
+                <th>Recommended tier</th>
+                <td class="mono">{{ opt_tier }}</td>
+            </tr>
+            <tr>
+                <th>Est. Total (£/mo) in recommended tier</th>
+                <td class="mono">£{{ opt_total_month|floatformat:8 }}</td>
+            </tr>
+            <tr>
+                <th>Potential saving (£/mo)</th>
+                <td class="mono">
+                    {% if opt_saving_month > 0 %}
+                        £{{ opt_saving_month|floatformat:8 }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
             </tr>
 
         </table>

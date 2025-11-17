@@ -164,10 +164,10 @@ def homepage(request):
 
             # Annotate only current page rows
             for b in page_obj.object_list:
-                # capacity estimate for this blob
+                # capacity estimate for this blob (using its current tier)
                 cap = pricing.estimate_capacity_month(size_bytes=b.size, tier=b.blob_tier)
 
-                # mock reads in last 30 days (used as "monthly" usage)
+                # mock reads in last 30 days
                 _last_30, total_30, _hist_30 = mock_usage.get_mock_access_window(
                     container_name=container_name,
                     blob_name=b.name,
@@ -181,21 +181,40 @@ def homepage(request):
                     window_days=180,
                 )
 
-                # mock reads in last 365 days
+                # mock reads in last 365 days (for display)
                 _last_365, total_365, _hist_365 = mock_usage.get_mock_access_window(
                     container_name=container_name,
                     blob_name=b.name,
                     window_days=365,
                 )
 
-                # read operation cost per month (based on last 30 days)
+                # mock reads across full available history for cost decision
+                _last_all, total_all, _hist_all = mock_usage.get_mock_access_window(
+                    container_name=container_name,
+                    blob_name=b.name,
+                    window_days=mock_usage.MAX_HISTORY_DAYS,
+                )
+
+                # use full-history reads for cost comparison
+                reads_for_cost = total_all
+
+                # read operation cost based on full-history reads
                 read_cost = pricing.estimate_read_cost_month(
-                    reads_30_days=total_30,
+                    reads_count=reads_for_cost,
                     tier=b.blob_tier,
                 )
 
-                # total estimated cost = capacity + read operations
+                # total estimated cost = capacity + read operations (current tier)
                 total_cost = cap + read_cost
+
+                # find optimal tier based on size and full-history reads
+                opt_tier, opt_total, _per_tier = pricing.find_optimal_tier(
+                    size_bytes=b.size,
+                    reads_count=reads_for_cost,
+                )
+
+                # potential saving if moved to optimal tier
+                opt_saving = total_cost - opt_total
 
                 # attach values for template
                 setattr(b, "access_30d", total_30)
@@ -204,6 +223,9 @@ def homepage(request):
                 setattr(b, "est_capacity_month", cap)
                 setattr(b, "est_read_month", read_cost)
                 setattr(b, "est_total_month", total_cost)
+                setattr(b, "opt_tier", opt_tier)
+                setattr(b, "opt_total_month", opt_total)      # <- NEW: total if moved
+                setattr(b, "opt_saving_month", opt_saving)
 
             # Build Prev/Next URLs (short; no tokens)
             base_params = {
@@ -290,14 +312,29 @@ def blob_info(request, container, blob):
         window_days=365,
     )
 
-    # read operation cost per month (based on last 30 days)
+    # full-history reads for cost decision
+    _last_all, total_all, _hist_all = mock_usage.get_mock_access_window(
+        container_name=container,
+        blob_name=blob,
+        window_days=mock_usage.MAX_HISTORY_DAYS,
+    )
+    reads_for_cost = total_all
+
+    # read operation cost (using full-history count)
     est_read_month = pricing.estimate_read_cost_month(
-        reads_30_days=total_30,
+        reads_count=reads_for_cost,
         tier=tier_norm,
     )
 
-    # total cost = capacity + reads
+    # total cost = capacity + reads (current tier)
     est_total = est_capacity + est_read_month
+
+    # optimal tier and cost based on size + full-history reads
+    opt_tier, opt_total, opt_per_tier = pricing.find_optimal_tier(
+        size_bytes=size_bytes,
+        reads_count=reads_for_cost,
+    )
+    opt_saving = est_total - opt_total
 
     context = {
         # original objects
@@ -319,12 +356,17 @@ def blob_info(request, container, blob):
         "tier_norm": tier_norm,
         "unit_price": unit_price,
 
-        # estimates (£/mo)
+        # estimates (£/mo) for current tier
         "est_capacity_month": est_capacity,
         "est_read_month": est_read_month,
         "est_total_month": est_total,
 
-        # mock read counts
+        # optimal tier suggestion
+        "opt_tier": opt_tier,
+        "opt_total_month": opt_total,
+        "opt_saving_month": opt_saving,
+
+        # mock read counts for display
         "access_30d": total_30,
         "access_180d": total_180,
         "access_365d": total_365,

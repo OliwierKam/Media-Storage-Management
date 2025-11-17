@@ -110,7 +110,10 @@
                     <th>Reads (365 days)</th>
                     <th>Est. Capacity £/mo</th>
                     <th>Est. Read Ops £/mo</th>
-                    <th>Est. Total £/mo</th>
+                    <th>Est. Total £/mo (Current)</th>
+                    <th>Optimal Tier</th>
+                    <th>Est. Total £/mo (Optimal)</th>
+                    <th>Potential Saving £/mo</th>
                 </tr>
                 {% for blob in blob_list %}
                     <tr>
@@ -124,6 +127,15 @@
                         <td>£{{ blob.est_capacity_month|floatformat:8 }}</td>
                         <td>£{{ blob.est_read_month|floatformat:8 }}</td>
                         <td><b>£{{ blob.est_total_month|floatformat:8 }}</b></td>
+                        <td>{{ blob.opt_tier }}</td>
+                        <td>£{{ blob.opt_total_month|floatformat:8 }}</td>
+                        <td>
+                            {% if blob.opt_saving_month > 0 %}
+                                £{{ blob.opt_saving_month|floatformat:8 }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
                     </tr>
                 {% endfor %}
             </table>
