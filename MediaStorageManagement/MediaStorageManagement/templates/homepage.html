@@ -16,15 +16,14 @@
             }
             th, td {
                 border: 1px solid #ccc;
-                padding: 20px 15px;   /* more vertical padding = taller rows */
+                padding: 20px 15px;   /* taller rows via padding */
                 text-align: left;
                 vertical-align: middle;
             }
             th {
-                background-color: #f2f2f2; /* header stays obvious */
+                background-color: #f2f2f2;
                 width: 200px;
             }
-            /* darker zebra striping on data rows only */
             table tbody tr:nth-child(odd) {
                 background-color: #ffffff;
             }
@@ -65,7 +64,22 @@
                 cursor: pointer;
                 font-weight: bold;
             }
+
+            .chart-container {
+                margin-top: 10px;
+                margin-bottom: 20px;
+                padding: 15px;
+                background: #fff;
+                border: 1px solid #ccc;
+                width: 60%;
+            }
         </style>
+
+        <!-- Chart.js from CDN
+             Pattern adapted from Chart.js official samples:
+             https://www.chartjs.org/docs/latest/samples/bar/basic.html
+        -->
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     </head>
     <body>
 
@@ -104,7 +118,6 @@
                            value="{{ container_name|default:'' }}">
                 </div>
                 <div class="controls">
-                    <!-- Optional: virtual folder prefix (scales for millions of blobs) -->
                     <input type="text" name="prefix" placeholder="Prefix (e.g. photos/2025/)"
                            value="{{ prefix|default:'' }}">
                     <span class="muted">Filter by prefix to narrow results.</span>
@@ -121,16 +134,63 @@
 
         <br>
 
-        <!-- Check for result messages and print -->
+        <!-- Messages -->
         {% if messages %}
             {% for m in messages %}{{ m }}<br>{% endfor %}
         {% endif %}
 
         <br>
+
+        <!-- Buttons that trigger charts (via GET flags) -->
+        <div class="controls">
+            <form method="get" style="display:inline;">
+                <input type="hidden" name="container_name" value="{{ container_name }}">
+                <input type="hidden" name="prefix" value="{{ prefix }}">
+                <input type="hidden" name="page_size" value="{{ page_size|default:'100' }}">
+                {% if page_num %}
+                    <input type="hidden" name="p" value="{{ page_num }}">
+                {% endif %}
+                <button type="submit" name="show_global_chart" value="1">
+                    Show global cost chart (all containers)
+                </button>
+            </form>
+
+            {% if container_name %}
+                <form method="get" style="display:inline; margin-left:10px;">
+                    <input type="hidden" name="container_name" value="{{ container_name }}">
+                    <input type="hidden" name="prefix" value="{{ prefix }}">
+                    <input type="hidden" name="page_size" value="{{ page_size|default:'100' }}">
+                    {% if page_num %}
+                        <input type="hidden" name="p" value="{{ page_num }}">
+                    {% endif %}
+                    <button type="submit" name="show_container_chart" value="1">
+                        Show container cost chart ({{ container_name }})
+                    </button>
+                </form>
+            {% endif %}
+        </div>
+
+        <!-- GLOBAL CHART (only rendered if totals were computed) -->
+        {% if global_current_total is not None and global_opt_total is not None %}
+            <div class="chart-container">
+                <h3>Global estimated monthly cost (all containers)</h3>
+                <canvas id="globalCostChart" width="600" height="250"></canvas>
+            </div>
+        {% endif %}
+
+        <!-- CONTAINER CHART -->
+        {% if container_current_total is not None and container_opt_total is not None %}
+            <div class="chart-container">
+                <h3>
+                    Estimated monthly cost for container
+                    {% if container_name %}<span class="mono">{{ container_name }}</span>{% endif %}
+                </h3>
+                <canvas id="containerCostChart" width="600" height="250"></canvas>
+            </div>
+        {% endif %}
         
-        <!-- Lists blobs on request -->
+        <!-- Blob list -->
         {% if blob_list %}
-            <!-- Button to open popup with suggested changes -->
             {% if suggestions and suggestions|length > 0 %}
                 <div class="controls">
                     <button type="button" id="open-suggestions">
@@ -207,7 +267,7 @@
 
             <br>
 
-            <!-- Paging (Django Paginator) -->
+            <!-- Paging -->
             <div class="controls">
                 {% if prev_url %}
                     <a href="{{ prev_url }}">← Previous</a>
@@ -220,11 +280,8 @@
                     {% if paginator %}
                         of {{ paginator.num_pages }}
                     {% endif %}
-                    
                     {% if has_next is not None %}
-                        {% if not has_next %} 
-                            (end)
-                        {% endif %}
+                        {% if not has_next %}(end){% endif %}
                     {% endif %}
                 </span>
 
@@ -234,7 +291,6 @@
                     <span class="muted">Next →</span>
                 {% endif %}
             </div>
-
         {% endif %}
 
         <!-- Modal for suggested changes -->
@@ -335,6 +391,7 @@
             })();
 
             // Keep scroll position
+            // https://stackoverflow.com/questions/17642872/refresh-page-and-keep-scroll-position
             document.addEventListener("DOMContentLoaded", function(event) { 
                 var scrollpos = localStorage.getItem('scrollpos');
                 if (scrollpos) window.scrollTo(0, scrollpos);
@@ -344,6 +401,152 @@
                 localStorage.setItem('scrollpos', window.scrollY);
             };
         </script>
+
+        {% if global_current_total is not None or container_current_total is not None %}
+        <script>
+            (function () {
+                // Adapted from
+                // https://stackoverflow.com/questions/40868184/how-to-use-chart-js-with-django
+                // and Chart.js basic bar sample:
+                // https://www.chartjs.org/docs/latest/samples/bar/basic.html
+
+                // Simple plugin to draw value labels on top of bars
+                const valueLabelPlugin = {
+                    id: 'valueLabelPlugin',
+                    afterDatasetsDraw(chart, args, pluginOptions) {
+                        const { ctx } = chart;
+                        ctx.save();
+                        const datasets = chart.data.datasets;
+
+                        datasets.forEach((dataset, datasetIndex) => {
+                            const meta = chart.getDatasetMeta(datasetIndex);
+                            meta.data.forEach((bar, index) => {
+                                const value = dataset.data[index];
+                                if (value == null) return;
+
+                                const x = bar.x;
+                                const y = bar.y - 5;
+
+                                ctx.font = '12px Arial';
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'bottom';
+                                ctx.fillStyle = '#333';
+
+                                // show 8 decimal places for accuracy
+                                const v = Number(value);
+                                ctx.fillText('£' + v.toFixed(8), x, y);
+                            });
+                        });
+                        ctx.restore();
+                    }
+                };
+
+                // GLOBAL chart
+                {% if global_current_total is not None and global_opt_total is not None %}
+                (function () {
+                    var canvas = document.getElementById("globalCostChart");
+                    if (!canvas) return;
+
+                    var ctx = canvas.getContext("2d");
+                    var current = {{ global_current_total|default:"0" }};
+                    var optimal = {{ global_opt_total|default:"0" }};
+
+                    new Chart(ctx, {
+                        type: "bar",
+                        data: {
+                            labels: ["All blobs (all containers)"],
+                            datasets: [
+                                {
+                                    label: "Current total (£/mo)",
+                                    data: [current]
+                                },
+                                {
+                                    label: "Optimal total (£/mo)",
+                                    data: [optimal]
+                                }
+                            ]
+                        },
+                        plugins: [valueLabelPlugin],
+                        options: {
+                            responsive: true,
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    title: {
+                                        display: true,
+                                        text: "£ per month"
+                                    }
+                                }
+                            },
+                            plugins: {
+                                tooltip: {
+                                    callbacks: {
+                                        label: function (context) {
+                                            var v = context.parsed.y || 0;
+                                            return context.dataset.label + ": £" + v.toFixed(8);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                })();
+                {% endif %}
+
+                // CONTAINER chart
+                {% if container_current_total is not None and container_opt_total is not None %}
+                (function () {
+                    var canvas = document.getElementById("containerCostChart");
+                    if (!canvas) return;
+
+                    var ctx = canvas.getContext("2d");
+                    var current = {{ container_current_total|default:"0" }};
+                    var optimal = {{ container_opt_total|default:"0" }};
+
+                    new Chart(ctx, {
+                        type: "bar",
+                        data: {
+                            labels: ["Container"],
+                            datasets: [
+                                {
+                                    label: "Current total (£/mo)",
+                                    data: [current]
+                                },
+                                {
+                                    label: "Optimal total (£/mo)",
+                                    data: [optimal]
+                                }
+                            ]
+                        },
+                        plugins: [valueLabelPlugin],
+                        options: {
+                            responsive: true,
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    title: {
+                                        display: true,
+                                        text: "£ per month"
+                                    }
+                                }
+                            },
+                            plugins: {
+                                tooltip: {
+                                    callbacks: {
+                                        label: function (context) {
+                                            var v = context.parsed.y || 0;
+                                            return context.dataset.label + ": £" + v.toFixed(8);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                })();
+                {% endif %}
+            })();
+        </script>
+        {% endif %}
 
     </body>
 </html>

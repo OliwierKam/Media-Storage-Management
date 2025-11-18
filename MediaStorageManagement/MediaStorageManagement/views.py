@@ -1,5 +1,3 @@
-# views.py
-
 # Django imports
 from django.shortcuts import render, redirect
 from django.conf import settings
@@ -62,7 +60,10 @@ def change_blob_tier(container_name: str, blob_name: str, new_tier: str):
 # Annotate a blob object with usage + cost + suggested tier
 def annotate_blob_with_costs(container_name, blob_obj):
     # capacity estimate for this blob (using its current tier)
-    cap = pricing.estimate_capacity_month(size_bytes=blob_obj.size, tier=blob_obj.blob_tier)
+    cap = pricing.estimate_capacity_month(
+        size_bytes=blob_obj.size,
+        tier=blob_obj.blob_tier,
+    )
 
     # mock reads in last 30 days
     _last_30, total_30, _hist_30 = mock_usage.get_mock_access_window(
@@ -187,7 +188,7 @@ def homepage(request):
             if error:
                 messages.error(request, error)
             else:
-                selected_items = request.POST.getlist("items")  # each "blob_name|tier"
+                selected_items = request.POST.getlist("items") # each "blob_name|tier"
                 changed = 0
 
                 for item in selected_items:
@@ -225,7 +226,7 @@ def homepage(request):
 
         # Check container creation
         if "create_container" in request.POST:
-            container_name = request.POST.get('container_name')
+            container_name = request.POST.get('container_name', '').strip()
 
             error = check_container_name(container_name)
             if error:
@@ -236,7 +237,7 @@ def homepage(request):
                 blob_service_client.create_container(container_name)
             except ResourceExistsError:
                 messages.info(request, f"Container '{container_name}' already exists.")
-            except ClientAuthenticationError:  # Pops if changes aren't authenticated.
+            except ClientAuthenticationError: # Pops if changes aren't authenticated.
                 messages.error(request, "Not authorized. Check Azure login.")
             except HttpResponseError:
                 messages.error(request, "Unexpected Azure error while creating the container.")
@@ -253,14 +254,17 @@ def homepage(request):
             
             blob_file = request.FILES["blob_file"]
             blob_name = blob_file.name
-            container_name = request.POST.get("container_name")
+            container_name = request.POST.get("container_name", "").strip()
 
             error = check_container_name(container_name)
             if error:
                 messages.error(request, error)
                 return render(request, "homepage.html")
             
-            blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+            blob_client = blob_service_client.get_blob_client(
+                container=container_name,
+                blob=blob_name,
+            )
 
             try:
                 blob_client.upload_blob(blob_file, overwrite=True)
@@ -274,19 +278,17 @@ def homepage(request):
                 messages.success(request, f"Uploaded '{blob_name}' to '{container_name}'.")
             return render(request, "homepage.html")
 
-    # Scalable listing via GET (now using Django Paginator)
-    if request.method == "GET" and ("container_name" in request.GET):
+    # ----- GET: listing + charts -----
+    if request.method == "GET":
+        # common query params
         container_name = request.GET.get("container_name", "").strip()
-
-        # Check validiy of name
-        error = check_container_name(container_name)
-        if error:
-            messages.error(request, error)
-            return render(request, "homepage.html")
-        
         prefix = request.GET.get("prefix") or None
 
-        # configurable page size; clamp to safe range
+        # flags to trigger chart calculations
+        show_global_chart = request.GET.get("show_global_chart") == "1"
+        show_container_chart = request.GET.get("show_container_chart") == "1"
+
+        # page size
         try:
             page_size = int(request.GET.get("page_size", 100))
         except ValueError:
@@ -301,82 +303,160 @@ def homepage(request):
         if p < 1:
             p = 1
 
-        container_client = blob_service_client.get_container_client(container=container_name)
+        # totals for charts
+        global_current_total = None
+        global_opt_total = None
+        container_current_total = None
+        container_opt_total = None
 
-        try:
-            # Container props for heading
-            container = container_client.get_container_properties()
+        # --- GLOBAL TOTALS: all containers, all blobs (only if asked) ---
+        if show_global_chart:
+            total_cur = 0.0
+            total_opt = 0.0
 
-            # Get all blobs (optionally filtered by prefix)
-            blob_iter = container_client.list_blobs(name_starts_with=prefix or None)
-            blob_list_all = list(blob_iter)
+            for c in blob_service_client.list_containers():
+                c_name = c.name
+                c_client = blob_service_client.get_container_client(c_name)
+                for b in c_client.list_blobs():
+                    # annotate each blob with costs
+                    annotate_blob_with_costs(c_name, b)
+                    total_cur += getattr(b, "est_total_month", 0.0)
+                    total_opt += getattr(b, "opt_total_month", 0.0)
 
-            # Simple paginator
-            paginator = Paginator(blob_list_all, page_size)
+            global_current_total = total_cur
+            global_opt_total = total_opt
+
+        # --- CONTAINER LISTING ---
+        if container_name:
+            error = check_container_name(container_name)
+            if error:
+                messages.error(request, error)
+                context = {
+                    "container_name": container_name,
+                    "prefix": prefix or "",
+                    "page_size": page_size,
+                    "show_global_chart": show_global_chart,
+                    "show_container_chart": show_container_chart,
+                    "global_current_total": global_current_total,
+                    "global_opt_total": global_opt_total,
+                    "container_current_total": container_current_total,
+                    "container_opt_total": container_opt_total,
+                }
+                return render(request, "homepage.html", context)
+
+            container_client = blob_service_client.get_container_client(
+                container=container_name
+            )
 
             try:
-                page_obj = paginator.page(p)
-            except PageNotAnInteger:
-                page_obj = paginator.page(1)
-                p = 1
-            except EmptyPage:
-                page_obj = paginator.page(paginator.num_pages)
-                p = paginator.num_pages
+                # Container props for heading
+                container = container_client.get_container_properties()
 
-            suggestions = []
+                # Get all blobs (optionally filtered by prefix)
+                blob_iter = container_client.list_blobs(name_starts_with=prefix or None)
+                blob_list_all = list(blob_iter)
 
-            # Annotate only current page rows
-            for b in page_obj.object_list:
-                annotate_blob_with_costs(container_name, b)
-                if getattr(b, "opt_tier", None) and b.opt_tier != b.blob_tier:
-                    suggestions.append(b)
+                # annotate all blobs in this container once
+                for b in blob_list_all:
+                    annotate_blob_with_costs(container_name, b)
 
-            # Build Prev/Next URLs (short; no tokens)
-            base_params = {
-                "container_name": container_name,
-                "page_size": page_size,
-            }
-            if prefix:
-                base_params["prefix"] = prefix
+                # per-container totals (all blobs)
+                if show_container_chart:
+                    container_current_total = sum(
+                        getattr(b, "est_total_month", 0.0) for b in blob_list_all
+                    )
+                    container_opt_total = sum(
+                        getattr(b, "opt_total_month", 0.0) for b in blob_list_all
+                    )
 
-            prev_url = None
-            if page_obj.has_previous():
-                params_prev = base_params.copy()
-                params_prev["p"] = page_obj.previous_page_number()
-                prev_url = f"{reverse('homepage')}?{urlencode(params_prev)}"
+                # paginator
+                paginator = Paginator(blob_list_all, page_size)
 
-            next_url = None
-            if page_obj.has_next():
-                params_next = base_params.copy()
-                params_next["p"] = page_obj.next_page_number()
-                next_url = f"{reverse('homepage')}?{urlencode(params_next)}"
+                try:
+                    page_obj = paginator.page(p)
+                except PageNotAnInteger:
+                    page_obj = paginator.page(1)
+                    p = 1
+                except EmptyPage:
+                    page_obj = paginator.page(paginator.num_pages)
+                    p = paginator.num_pages
 
-            context = {
-                'blob_list': page_obj.object_list,
-                'container': container,
-                'container_name': container_name,
-                'prefix': (prefix or ""),
-                'page_size': page_size,
+                # collect suggestions only from the current page
+                suggestions = []
+                for b in page_obj.object_list:
+                    if getattr(b, "opt_tier", None) and b.opt_tier != b.blob_tier:
+                        suggestions.append(b)
 
-                # paging UI
-                'page_num': page_obj.number,
-                'prev_url': prev_url,
-                'next_url': next_url,
-                'has_next': page_obj.has_next(),
-                'paginator': paginator,
+                # Build Prev/Next URLs
+                base_params = {
+                    "container_name": container_name,
+                    "page_size": page_size,
+                }
+                if prefix:
+                    base_params["prefix"] = prefix
 
-                # suggested changes (for popup)
-                'suggestions': suggestions,
-            }
+                prev_url = None
+                if page_obj.has_previous():
+                    params_prev = base_params.copy()
+                    params_prev["p"] = page_obj.previous_page_number()
+                    prev_url = f"{reverse('homepage')}?{urlencode(params_prev)}"
 
-            return render(request, "homepage.html", context)
-        except ResourceNotFoundError:
-            messages.error(request, "Container not found.")
-        except ClientAuthenticationError:
-            messages.error(request, "Not authorized. Check Azure login.")
-        except HttpResponseError:
-            messages.error(request, "Unexpected Azure error during upload.")          
-        
+                next_url = None
+                if page_obj.has_next():
+                    params_next = base_params.copy()
+                    params_next["p"] = page_obj.next_page_number()
+                    next_url = f"{reverse('homepage')}?{urlencode(params_next)}"
+
+                context = {
+                    "blob_list": page_obj.object_list,
+                    "container": container,
+                    "container_name": container_name,
+                    "prefix": (prefix or ""),
+                    "page_size": page_size,
+
+                    # paging UI
+                    "page_num": page_obj.number,
+                    "prev_url": prev_url,
+                    "next_url": next_url,
+                    "has_next": page_obj.has_next(),
+                    "paginator": paginator,
+
+                    # suggested changes (for popup)
+                    "suggestions": suggestions,
+
+                    # chart flags + totals
+                    "show_global_chart": show_global_chart,
+                    "show_container_chart": show_container_chart,
+                    "global_current_total": global_current_total,
+                    "global_opt_total": global_opt_total,
+                    "container_current_total": container_current_total,
+                    "container_opt_total": container_opt_total,
+                }
+
+                return render(request, "homepage.html", context)
+
+            except ResourceNotFoundError:
+                messages.error(request, "Container not found.")
+            except ClientAuthenticationError:
+                messages.error(request, "Not authorized. Check Azure login.")
+            except HttpResponseError:
+                messages.error(request, "Unexpected Azure error during upload.")
+
+        # GET with no container_name: maybe just global chart
+        base_context = {
+            "container_name": container_name,
+            "prefix": prefix or "",
+            "page_size": page_size,
+            "show_global_chart": show_global_chart,
+            "show_container_chart": show_container_chart,
+            "global_current_total": global_current_total,
+            "global_opt_total": global_opt_total,
+            "container_current_total": container_current_total,
+            "container_opt_total": container_opt_total,
+        }
+        return render(request, "homepage.html", base_context)
+
+    # default
     return render(request, "homepage.html")
 
 
