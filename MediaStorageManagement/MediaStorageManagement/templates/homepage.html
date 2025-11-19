@@ -55,7 +55,9 @@
                 padding: 20px;
                 margin: 60px auto;
                 width: 80%;
-                max-width: 900px;
+                max-width: 1200px;   /* allow a wider modal if needed */
+                max-height: 80vh;    /* don't let the modal exceed the viewport height */
+                overflow: hidden;    /* anything beyond this stays inside, table will scroll */
                 border-radius: 4px;
                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
             }
@@ -73,18 +75,20 @@
                 border: 1px solid #ccc;
                 width: 60%;
             }
+
         </style>
 
-        <!-- Chart.js from CDN
-             Pattern adapted from Chart.js official samples:
-             https://www.chartjs.org/docs/latest/samples/bar/basic.html
+        <!--
+        Chart.js from CDN
+        Pattern adapted from Chart.js official samples:
+        https://www.chartjs.org/docs/latest/samples/bar/basic.html
         -->
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     </head>
     <body>
-
+        <!--
         <div>
-            <!-- Create container form -->
+            Create container form
             <form action="{% url 'homepage' %}" method="post">
                 {% csrf_token %}
                 <label><b>Create Container:</b></label><br>
@@ -96,7 +100,7 @@
         <br>
 
         <div>
-            <!-- Upload to container form -->
+            Upload to container form
             <form action="{% url 'homepage' %}" method="post" enctype="multipart/form-data">
                 {% csrf_token %}
                 <label><b>Upload File to Container:</b></label><br>
@@ -105,6 +109,7 @@
                 <button type="submit" name="upload_blob">Upload</button>
             </form>
         </div>
+        -->
 
         <br>
 

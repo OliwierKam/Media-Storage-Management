@@ -352,9 +352,17 @@ def homepage(request):
                 # Container props for heading
                 container = container_client.get_container_properties()
 
-                # Get all blobs (optionally filtered by prefix)
-                blob_iter = container_client.list_blobs(name_starts_with=prefix or None)
-                blob_list_all = list(blob_iter)
+                # Get all blobs and filter prefix case-insensitively
+                blob_iter = container_client.list_blobs()
+
+                if prefix:
+                    prefix_lower = prefix.lower()
+                    blob_list_all = []
+                    for b in blob_iter:
+                        if b.name.lower().startswith(prefix_lower):
+                            blob_list_all.append(b)
+                else:
+                    blob_list_all = list(blob_iter)
 
                 # annotate all blobs in this container once
                 for b in blob_list_all:
