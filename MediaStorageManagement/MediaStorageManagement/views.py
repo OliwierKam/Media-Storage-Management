@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.urls import reverse
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from urllib.parse import urlencode
+from datetime import datetime, timezone
 
 # Django app packages
 from utils import pricing
@@ -105,10 +106,26 @@ def annotate_blob_with_costs(container_name, blob_obj):
     # total estimated cost = capacity + read operations (current tier)
     total_cost = cap + read_cost
 
-    # find optimal tier based on size and full-history reads
+    # compute days since creation (for tier algorithm)
+    creation_time = getattr(blob_obj, "creation_time", None)
+    if creation_time is not None:
+        now = datetime.now(timezone.utc)
+        days_since_creation = max(0, (now - creation_time).days)
+    else:
+        days_since_creation = None
+
+    # mocked business metadata for this blob (criticality, relevance, etc.)
+    meta = mock_usage.get_mock_blob_metadata(
+        container_name=container_name,
+        blob_name=blob_obj.name,
+    )
+    meta["days_since_creation"] = days_since_creation
+
+    # find optimal tier based on size, full-history reads, and metadata
     opt_tier, opt_total, _per_tier = pricing.find_optimal_tier(
         size_bytes=blob_obj.size,
         reads_count=reads_for_cost,
+        **meta,
     )
 
     # potential saving if moved to optimal tier
@@ -188,7 +205,7 @@ def homepage(request):
             if error:
                 messages.error(request, error)
             else:
-                selected_items = request.POST.getlist("items") # each "blob_name|tier"
+                selected_items = request.POST.getlist("items")  # each "blob_name|tier"
                 changed = 0
 
                 for item in selected_items:
@@ -226,7 +243,7 @@ def homepage(request):
 
         # Check container creation
         if "create_container" in request.POST:
-            container_name = request.POST.get('container_name', '').strip()
+            container_name = request.POST.get("container_name", "").strip()
 
             error = check_container_name(container_name)
             if error:
@@ -237,7 +254,7 @@ def homepage(request):
                 blob_service_client.create_container(container_name)
             except ResourceExistsError:
                 messages.info(request, f"Container '{container_name}' already exists.")
-            except ClientAuthenticationError: # Pops if changes aren't authenticated.
+            except ClientAuthenticationError:
                 messages.error(request, "Not authorized. Check Azure login.")
             except HttpResponseError:
                 messages.error(request, "Unexpected Azure error while creating the container.")
@@ -448,7 +465,7 @@ def homepage(request):
             except ClientAuthenticationError:
                 messages.error(request, "Not authorized. Check Azure login.")
             except HttpResponseError:
-                messages.error(request, "Unexpected Azure error during upload.")
+                messages.error(request, "Unexpected Azure error during listing.")
 
         # GET with no container_name: maybe just global chart
         base_context = {
@@ -523,10 +540,26 @@ def blob_info(request, container, blob):
     # total cost = capacity + reads
     est_total = est_capacity + est_read_month
 
-    # optimal tier and cost based on size + full-history reads
+    # compute days since creation (for tier algorithm)
+    creation_time = getattr(props, "creation_time", None)
+    if creation_time is not None:
+        now = datetime.now(timezone.utc)
+        days_since_creation = max(0, (now - creation_time).days)
+    else:
+        days_since_creation = None
+
+    # mocked metadata for this blob
+    meta = mock_usage.get_mock_blob_metadata(
+        container_name=container,
+        blob_name=blob,
+    )
+    meta["days_since_creation"] = days_since_creation
+
+    # optimal tier and cost based on size + full-history reads + metadata
     opt_tier, opt_total, opt_per_tier = pricing.find_optimal_tier(
         size_bytes=size_bytes,
         reads_count=reads_for_cost,
+        **meta,
     )
     opt_saving = est_total - opt_total
 
