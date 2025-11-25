@@ -69,7 +69,6 @@ def estimate_total_month(size_bytes: int, reads_count: int, tier: str) -> float:
     # total
     return cap + reads
 
-
 # find cheapest / best tier based on size, total reads, and extra metadata
 def find_optimal_tier(
     size_bytes: int,
@@ -82,20 +81,55 @@ def find_optimal_tier(
     planned_activities_6m: bool = False,
     media_relevance: int = 0,
 ):
-    """
-    Decide an optimal tier for a blob.
 
-    - criticality_index: 0..5 (5 = highest importance)
-    - has_historical_links: bool
-    - days_since_last_access: int days or None
-    - days_since_creation: int days or None
-    - human_trigger_index: 0..5 (5 = very likely manual access)
-    - planned_activities_6m: bool (if blob is likely to be accessed)
-    - media_relevance: 0..5 (5 = will matter a lot in future)
-    """
-    # store per-tier raw costs based on size and reads
+    # global config
+    MAX_AGE_DAYS = 730  # clamp age at 2 years
+
+    # how different metadata contributes to "heat" (0..1)
+    HEAT_WEIGHT_CRITICALITY = 0.28
+    HEAT_WEIGHT_RELEVANCE = 0.22
+    HEAT_WEIGHT_HUMAN = 0.20
+    HEAT_WEIGHT_PLANNED = 0.15
+    HEAT_WEIGHT_FRESHNESS = 0.15
+
+    # heat suggested tier mapping
+    HEAT_THRESHOLD_HOT = 0.75
+    HEAT_THRESHOLD_COOL = 0.50
+    HEAT_THRESHOLD_COLD = 0.25
+
+    # generic penalties applied on top of raw cost
+    DISTANCE_PENALTY_PER_STEP = 0.5
+    ARCHIVE_HIGH_IMPORTANCE_PENALTY = 5.0
+    COLD_ARCHIVE_FUTURE_USAGE_PENALTY = 3.0
+    HISTORICAL_COLD_DISCOUNT = 0.5
+    LARGE_HOT_COOL_PENALTY = 1.2
+
+    # size-related thresholds (GB) for extra nudges away from Hot/Cool
+    LARGE_BLOB_THRESHOLD_GB = 100.0
+    VERY_LARGE_BLOB_THRESHOLD_GB = 1024.0
+    VERY_LARGE_HOT_PENALTY = 3.0
+
+    # hard rules and age-based tweaks
+    CRITICALITY_NO_ARCHIVE_THRESHOLD = 0.6
+    RECENT_ACCESS_NO_ARCHIVE_DAYS = 30
+    RECENT_ACCESS_NO_COLD_DAYS = 30
+
+    OLD_AGE_DAYS = 365
+    VERY_OLD_AGE_DAYS = 540
+    OLD_HEAT_THRESHOLD = 0.4
+    VERY_OLD_HEAT_THRESHOLD = 0.3
+    OLD_HOT_COOL_PENALTY = 1.5
+    VERY_OLD_HOT_PENALTY = 3.0
+
+    # historical data preferences
+    LOW_CRITICALITY_HISTORICAL_THRESHOLD = 0.4
+
+    # archive-specific rules (rehydration makes it unsuitable for near-term use)
+    PLANNED_NO_ARCHIVE = True
+    HUMAN_NO_ARCHIVE_THRESHOLD = 0.6
+
+    # store per-tier raw costs (no penalties yet)
     costs: dict[str, float] = {}
-
     for t in TIERS:
         costs[t] = estimate_total_month(
             size_bytes=size_bytes,
@@ -103,81 +137,122 @@ def find_optimal_tier(
             tier=t,
         )
 
-    # Normalise metadata into 0..1 weights where possible
-
+    # normalise metadata into 0..1
     criticality = max(0, min(criticality_index, 5)) / 5.0
     relevance = max(0, min(media_relevance, 5)) / 5.0
     human = max(0, min(human_trigger_index, 5)) / 5.0
     planned = 1.0 if planned_activities_6m else 0.0
 
-    # clamp age to minimum 0 days and max 2 years
+    # derive age in days (prefer last access, then creation, else "very old")
     if days_since_last_access is not None:
-        age_days = max(0, min(days_since_last_access, 730))
+        age_days = max(0, min(days_since_last_access, MAX_AGE_DAYS))
     elif days_since_creation is not None:
-        age_days = max(0, min(days_since_creation, 730))
+        age_days = max(0, min(days_since_creation, MAX_AGE_DAYS))
     else:
-        # no access info and no creation date
-        age_days = 730
+        age_days = MAX_AGE_DAYS
 
-    age = age_days / 730.0  # 0 = fresh, 1 = very old
+    age = age_days / float(MAX_AGE_DAYS)  # 0 = fresh, 1 = old
 
-    # higher heat means we want a hotter tier
+    # compute "heat" score (higher = we prefer hotter tiers)
     heat = (
-        (0.30 * criticality) +
-        (0.25 * relevance) +
-        (0.20 * human) +
-        (0.15 * planned) +
-        (0.10 * (1.0 - age))
+        (HEAT_WEIGHT_CRITICALITY * criticality) +
+        (HEAT_WEIGHT_RELEVANCE * relevance) +
+        (HEAT_WEIGHT_HUMAN * human) +
+        (HEAT_WEIGHT_PLANNED * planned) +
+        (HEAT_WEIGHT_FRESHNESS * (1.0 - age))
     )
 
-    # map heat to a "target" tier index
-
+    # map heat → suggested target tier
     tier_index = {name: idx for idx, name in enumerate(TIERS)}
 
-    if heat >= 0.75:
+    if heat >= HEAT_THRESHOLD_HOT:
         target_idx = tier_index["Hot"]
-    elif heat >= 0.50:
+    elif heat >= HEAT_THRESHOLD_COOL:
         target_idx = tier_index["Cool"]
-    elif heat >= 0.25:
+    elif heat >= HEAT_THRESHOLD_COLD:
         target_idx = tier_index["Cold"]
     else:
         target_idx = tier_index["Archive"]
 
-    # combine cost + penalties into a final score per tier
+    # hard disallowed tiers (policy / semantics)
+    disallowed_tiers: set[str] = set()
 
+    # critical blobs should not be in Archive
+    if criticality >= CRITICALITY_NO_ARCHIVE_THRESHOLD:
+        disallowed_tiers.add("Archive")
+
+    # recent access: keep in warmer tiers
+    if days_since_last_access is not None:
+        if days_since_last_access < RECENT_ACCESS_NO_ARCHIVE_DAYS:
+            disallowed_tiers.add("Archive")
+        if days_since_last_access < RECENT_ACCESS_NO_COLD_DAYS:
+            disallowed_tiers.add("Cold")
+
+    # newly created blobs should not go straight to Archive
+    if days_since_creation is not None:
+        if days_since_creation < RECENT_ACCESS_NO_ARCHIVE_DAYS:
+            disallowed_tiers.add("Archive")
+
+    # known near-future use: do not Archive
+    if PLANNED_NO_ARCHIVE and planned_activities_6m:
+        disallowed_tiers.add("Archive")
+
+    # strong human usage signal: avoid Archive
+    if human >= HUMAN_NO_ARCHIVE_THRESHOLD:
+        disallowed_tiers.add("Archive")
+
+    # combine raw cost + penalties for each allowed tier
     tier_scores: dict[str, float] = {}
 
     for t in TIERS:
+        if t in disallowed_tiers:
+            continue
+
         base_cost = costs[t]
         idx = tier_index[t]
 
-        # basic distance penalty: further from target tier -> worse
+        # gently punish tiers far from the heat-based target
         distance = abs(idx - target_idx)
-        penalty = 1.0 + 0.5 * distance  # 0 steps = 1.0, 1 step = 1.5, etc.
+        penalty = 1.0 + DISTANCE_PENALTY_PER_STEP * distance
 
-        # high criticality / relevance: strongly discourage Archive
+        # discourage putting relevant blobs into Archive (critically already addressed earlier)
         if t == "Archive":
-            if criticality >= 0.8 or relevance >= 0.8:
-                penalty *= 5.0
+            if relevance >= 0.6:
+                penalty *= ARCHIVE_HIGH_IMPORTANCE_PENALTY
 
-        # expected future usage or human activity: avoid Cold / Archive
+        # avoid Cold/Archive for near-term or human-driven workloads
         if t in ("Cold", "Archive"):
             if planned or human >= 0.6:
-                penalty *= 2.0
+                penalty *= COLD_ARCHIVE_FUTURE_USAGE_PENALTY
 
-        # historical blobs that are not very "hot" are allowed to drift colder
-        if has_historical_links and heat < 0.5 and t in ("Cold", "Archive"):
-            penalty *= 0.7  # slightly favour colder tiers
+        # low-criticality historical content is cheaper to keep cold
+        if has_historical_links:
+            if criticality < LOW_CRITICALITY_HISTORICAL_THRESHOLD:
+                if heat < 0.5 and t in ("Cold", "Archive"):
+                    penalty *= HISTORICAL_COLD_DISCOUNT
 
-        # very large blobs: gently steer away from expensive hot tiers
+        # older, low-heat data should drift away from hot tiers
+        if age_days > OLD_AGE_DAYS:
+            if heat < OLD_HEAT_THRESHOLD and t in ("Hot", "Cool"):
+                penalty *= OLD_HOT_COOL_PENALTY
+
+        if age_days > VERY_OLD_AGE_DAYS:
+            if heat < VERY_OLD_HEAT_THRESHOLD and t == "Hot":
+                penalty *= VERY_OLD_HOT_PENALTY
+
+        # size-based nudges away from Hot/Cool for large blobs
         size_gb = size_bytes / BYTES_PER_GB if size_bytes is not None else 0
-        if size_gb > 100 and t in ("Hot", "Cool"):
-            penalty *= 1.2
+
+        if size_gb > LARGE_BLOB_THRESHOLD_GB and t in ("Hot", "Cool"):
+            penalty *= LARGE_HOT_COOL_PENALTY
+
+        if size_gb > VERY_LARGE_BLOB_THRESHOLD_GB and t == "Hot":
+            penalty *= VERY_LARGE_HOT_PENALTY
 
         tier_scores[t] = base_cost * penalty
 
     # pick tier with the lowest (cost * penalty)
     best_tier = min(tier_scores, key=tier_scores.get)
-
     best_cost = costs[best_tier]
+
     return best_tier, best_cost, costs
