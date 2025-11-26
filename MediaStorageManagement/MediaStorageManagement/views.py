@@ -142,6 +142,15 @@ def annotate_blob_with_costs(container_name, blob_obj):
     setattr(blob_obj, "opt_total_month", opt_total)
     setattr(blob_obj, "opt_saving_month", opt_saving)
 
+    # also expose metadata on the blob for UI explanations
+    setattr(blob_obj, "criticality_index", meta.get("criticality_index", 0))
+    setattr(blob_obj, "media_relevance", meta.get("media_relevance", 0))
+    setattr(blob_obj, "human_trigger_index", meta.get("human_trigger_index", 0))
+    setattr(blob_obj, "planned_activities_6m", meta.get("planned_activities_6m", False))
+    setattr(blob_obj, "has_historical_links", meta.get("has_historical_links", False))
+    setattr(blob_obj, "days_since_creation_meta", days_since_creation)
+
+
 
 # ----- VIEWS -----
 

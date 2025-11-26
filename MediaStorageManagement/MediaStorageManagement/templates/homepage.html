@@ -2,52 +2,51 @@
 <html>
     <head>
         <title></title>
-        <!-- Basic Styling -->
+
+        <!-- Basic styling -->
         <style>
             body {
                 font-family: Arial, sans-serif;
                 margin: 30px;
-                background-color: #fafafa;
+                background: #fafafa;
             }
+
             table {
                 border-collapse: collapse;
                 width: 60%;
-                background: white;
+                background: #fff;
             }
+
             th, td {
                 border: 1px solid #ccc;
-                padding: 20px 15px;   /* taller rows via padding */
+                padding: 20px 15px;
                 text-align: left;
                 vertical-align: middle;
             }
+
             th {
-                background-color: #f2f2f2;
+                background: #f2f2f2;
                 width: 200px;
             }
-            table tbody tr:nth-child(odd) {
-                background-color: #ffffff;
-            }
-            table tbody tr:nth-child(even) {
-                background-color: #f0f0f0;
-            }
+
+            table tbody tr:nth-child(odd) { background: #fff; }
+            table tbody tr:nth-child(even) { background: #f0f0f0; }
 
             h3 {
                 font-size: 20px;
                 margin-bottom: 10px;
             }
+
             .controls { margin-bottom: 6px; }
             .controls input[type="text"] { width: 260px; }
             .muted { color:#666; font-size:12px; }
 
-            /* Simple modal styles */
+            /* simple modal */
             .modal-backdrop {
                 display: none;
                 position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.4);
+                inset: 0;
+                background: rgba(0,0,0,0.4);
                 z-index: 1000;
             }
             .modal {
@@ -55,11 +54,11 @@
                 padding: 20px;
                 margin: 60px auto;
                 width: 80%;
-                max-width: 1200px;   /* allow a wider modal if needed */
-                max-height: 80vh;    /* don't let the modal exceed the viewport height */
-                overflow: hidden;    /* anything beyond this stays inside, table will scroll */
+                max-width: 1200px;
+                max-height: 80vh;
+                overflow: hidden;
                 border-radius: 4px;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+                box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             }
             .modal-close {
                 float: right;
@@ -75,17 +74,12 @@
                 border: 1px solid #ccc;
                 width: 60%;
             }
-
         </style>
 
-        <!--
-        Chart.js from CDN
-        Pattern adapted from Chart.js official samples:
-        https://www.chartjs.org/docs/latest/samples/bar/basic.html
-        -->
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     </head>
     <body>
+
         <!--
         <div>
             Create container form
@@ -197,6 +191,11 @@
         <!-- Blob list -->
         {% if blob_list %}
             {% if suggestions and suggestions|length > 0 %}
+                <div class="controls muted">
+                    Suggestions are based on estimated cost, recent reads, age, importance
+                    and expected future use. Critical or recently accessed blobs are kept
+                    in warmer tiers.
+                </div>
                 <div class="controls">
                     <button type="button" id="open-suggestions">
                         Show suggested tier changes ({{ suggestions|length }})
@@ -249,18 +248,28 @@
                             </td>
                             <td>
                                 {% if blob.opt_tier and blob.opt_tier != blob.blob_tier %}
-                                    <form action="{% url 'homepage' %}" method="post" style="display:inline;">
-                                        {% csrf_token %}
-                                        <input type="hidden" name="container_name" value="{{ container_name }}">
-                                        <input type="hidden" name="prefix" value="{{ prefix }}">
-                                        <input type="hidden" name="page_size" value="{{ page_size }}">
-                                        <input type="hidden" name="page_num" value="{{ page_num }}">
-                                        <input type="hidden" name="blob_name" value="{{ blob.name }}">
-                                        <input type="hidden" name="target_tier" value="{{ blob.opt_tier }}">
-                                        <button type="submit" name="apply_tier_single">
-                                            Apply {{ blob.opt_tier }}
-                                        </button>
-                                    </form>
+                                    <button
+                                        type="button"
+                                        class="open-single-suggestion"
+                                        data-blob-name="{{ blob.name }}"
+                                        data-current-tier="{{ blob.blob_tier }}"
+                                        data-opt-tier="{{ blob.opt_tier }}"
+                                        data-access-365="{{ blob.access_365d }}"
+                                        data-current-total="{{ blob.est_total_month|floatformat:8 }}"
+                                        data-opt-total="{{ blob.opt_total_month|floatformat:8 }}"
+                                        data-container-name="{{ container_name }}"
+                                        data-prefix="{{ prefix }}"
+                                        data-page-size="{{ page_size }}"
+                                        data-page-num="{{ page_num }}"
+                                        data-criticality="{{ blob.criticality_index|default:0 }}"
+                                        data-relevance="{{ blob.media_relevance|default:0 }}"
+                                        data-human="{{ blob.human_trigger_index|default:0 }}"
+                                        data-planned="{{ blob.planned_activities_6m|yesno:'1,0,0' }}"
+                                        data-historical="{{ blob.has_historical_links|yesno:'1,0,0' }}"
+                                        data-age-days="{{ blob.days_since_creation_meta|default:0 }}"
+                                    >
+                                        View suggested change
+                                    </button>
                                 {% else %}
                                     <span class="muted">No change</span>
                                 {% endif %}
@@ -298,7 +307,7 @@
             </div>
         {% endif %}
 
-        <!-- Modal for suggested changes -->
+        <!-- Modal for suggested changes (bulk) -->
         {% if suggestions and suggestions|length > 0 %}
             <div id="suggestions-backdrop" class="modal-backdrop">
                 <div class="modal">
@@ -359,6 +368,61 @@
             </div>
         {% endif %}
 
+        <!-- Modal for a single blob suggested change -->
+        <div id="single-suggestion-backdrop" class="modal-backdrop">
+            <div class="modal">
+                <span class="modal-close" id="close-single-suggestion">&times;</span>
+                <h3>Suggested tier change</h3>
+
+                <p>
+                    <b>Blob:</b> <span id="single-blob-name"></span><br>
+                    <b>Current tier:</b> <span id="single-current-tier"></span><br>
+                    <b>Recommended tier:</b> <span id="single-opt-tier"></span>
+                </p>
+
+                <p>
+                    <b>Estimated cost (current):</b>
+                    £<span id="single-current-total"></span> / month<br>
+                    <b>Estimated cost (recommended):</b>
+                    £<span id="single-opt-total"></span> / month<br>
+                    <b>Estimated saving:</b>
+                    £<span id="single-saving"></span> / month
+                </p>
+
+                <p><b>Why this change?</b></p>
+                <ul id="single-hints"></ul>
+
+                <!-- Metadata toggle -->
+                <button type="button" id="toggle-metadata">Show metadata</button>
+
+                <div id="metadata-panel" style="display:none; margin-top:15px;">
+                    <h4>Metadata used in decision</h4>
+                    <ul>
+                        <li>Criticality: <span id="meta-criticality"></span> / 5</li>
+                        <li>Relevance: <span id="meta-relevance"></span> / 5</li>
+                        <li>Human-trigger likelihood: <span id="meta-human"></span> / 5</li>
+                        <li>Planned activity (6m): <span id="meta-planned"></span></li>
+                        <li>Historical links: <span id="meta-historical"></span></li>
+                        <li>Age (days): <span id="meta-age"></span></li>
+                    </ul>
+                </div>
+
+                <form method="post" action="{% url 'homepage' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="container_name" id="single-container-name">
+                    <input type="hidden" name="prefix" id="single-prefix">
+                    <input type="hidden" name="page_size" id="single-page-size">
+                    <input type="hidden" name="page_num" id="single-page-num">
+                    <input type="hidden" name="blob_name" id="single-blob-name-input">
+                    <input type="hidden" name="target_tier" id="single-target-tier-input">
+                    <button type="submit" name="apply_tier_single">
+                        Confirm tier change
+                    </button>
+                </form>
+            </div>
+        </div>
+
+
         <script>
             (function () {
                 var openBtn = document.getElementById("open-suggestions");
@@ -395,6 +459,166 @@
                 }
             })();
 
+            // single-blob suggestion modal
+            (function () {
+                var backdrop = document.getElementById("single-suggestion-backdrop");
+                var closeBtn = document.getElementById("close-single-suggestion");
+
+                function closeModal() {
+                    if (backdrop) backdrop.style.display = "none";
+                }
+
+                if (closeBtn && backdrop) {
+                    closeBtn.addEventListener("click", closeModal);
+                }
+                if (backdrop) {
+                    backdrop.addEventListener("click", function (e) {
+                        if (e.target === backdrop) closeModal();
+                    });
+                }
+
+                var buttons = document.querySelectorAll(".open-single-suggestion");
+                if (!buttons || buttons.length === 0 || !backdrop) {
+                    return;
+                }
+
+                buttons.forEach(function (btn) {
+                    btn.addEventListener("click", function () {
+                        var blobName = btn.getAttribute("data-blob-name") || "";
+                        var currentTier = btn.getAttribute("data-current-tier") || "";
+                        var optTier = btn.getAttribute("data-opt-tier") || "";
+                        var access365 = parseInt(btn.getAttribute("data-access-365") || "0", 10);
+                        var currentTotal = parseFloat(btn.getAttribute("data-current-total") || "0");
+                        var optTotal = parseFloat(btn.getAttribute("data-opt-total") || "0");
+
+                        var containerName = btn.getAttribute("data-container-name") || "";
+                        var prefix = btn.getAttribute("data-prefix") || "";
+                        var pageSize = btn.getAttribute("data-page-size") || "";
+                        var pageNum = btn.getAttribute("data-page-num") || "";
+
+                        // metadata
+                        var criticality = parseInt(btn.getAttribute("data-criticality") || "0", 10);
+                        var relevance = parseInt(btn.getAttribute("data-relevance") || "0", 10);
+                        var human = parseInt(btn.getAttribute("data-human") || "0", 10);
+                        var planned = btn.getAttribute("data-planned") === "1";
+                        var historical = btn.getAttribute("data-historical") === "1";
+                        var ageDays = parseInt(btn.getAttribute("data-age-days") || "0", 10);
+
+                        // Set visible fields
+                        document.getElementById("single-blob-name").textContent = blobName;
+                        document.getElementById("single-current-tier").textContent = currentTier;
+                        document.getElementById("single-opt-tier").textContent = optTier;
+
+                        document.getElementById("single-current-total").textContent = currentTotal.toFixed(8);
+                        document.getElementById("single-opt-total").textContent = optTotal.toFixed(8);
+
+                        var saving = currentTotal - optTotal;
+                        document.getElementById("single-saving").textContent = saving.toFixed(8);
+
+                        // Hidden form fields
+                        document.getElementById("single-container-name").value = containerName;
+                        document.getElementById("single-prefix").value = prefix;
+                        document.getElementById("single-page-size").value = pageSize;
+                        document.getElementById("single-page-num").value = pageNum;
+                        document.getElementById("single-blob-name-input").value = blobName;
+                        document.getElementById("single-target-tier-input").value = optTier;
+
+                        // Build explanation hints
+                        var hintsList = document.getElementById("single-hints");
+                        hintsList.innerHTML = "";
+
+                        // 1) Cost explanation
+                        var liCost = document.createElement("li");
+                        if (saving > 0.00000001) {
+                            liCost.textContent =
+                                "This change reduces estimated monthly cost by £" + saving.toFixed(8) + ".";
+                        } else {
+                            liCost.textContent =
+                                "This suggestion focuses on expected future usage and metadata, not short-term cost.";
+                        }
+                        hintsList.appendChild(liCost);
+
+                        // 2) Usage explanation (reads)
+                        var liUsage = document.createElement("li");
+                        if (access365 === 0) {
+                            liUsage.textContent = "No reads in the last 12 months — this strongly favours a cooler tier.";
+                        } else if (access365 <= 20) {
+                            liUsage.textContent = "Low read volume (" + access365 + " reads over 12 months).";
+                        } else if (access365 <= 200) {
+                            liUsage.textContent = "Moderate read activity (" + access365 + " reads).";
+                        } else {
+                            liUsage.textContent = "High read activity (" + access365 + " reads) — hotter tiers keep access cost and latency reasonable.";
+                        }
+                        hintsList.appendChild(liUsage);
+
+                        // 3) Metadata explanation
+                        var liMeta = document.createElement("li");
+
+                        if (planned) {
+                            liMeta.textContent =
+                                "This blob is expected to be used in the next 6 months, so slower tiers are avoided.";
+                        }
+                        else if (human >= 3) {
+                            liMeta.textContent =
+                                "Likely to be opened manually by users, so the recommended tier keeps access fast.";
+                        }
+                        else if (criticality >= 4) {
+                            liMeta.textContent =
+                                "High-criticality data — kept accessible even if a cooler tier might be slightly cheaper.";
+                        }
+                        else if (relevance >= 4) {
+                            liMeta.textContent =
+                                "This content is expected to remain relevant; suggested tier favours availability.";
+                        }
+                        else if (historical && access365 < 20 && ageDays > 180) {
+                            liMeta.textContent =
+                                "Historical, low-access data — suitable for long-term cooler storage.";
+                        }
+                        else if (ageDays > 365 && access365 < 20) {
+                            liMeta.textContent =
+                                "Old and rarely accessed (" + ageDays +
+                                " days since creation). Cooler tiers are typically more cost-efficient long-term.";
+                        }
+                        else {
+                            // This is the "planned = false" fallback people were missing.
+                            liMeta.textContent =
+                                "No planned activity detected — recommendation is based on typical long-term behaviour and metadata.";
+                        }
+
+                        hintsList.appendChild(liMeta);
+
+                        // Fill metadata panel fields
+                        document.getElementById("meta-criticality").textContent = criticality;
+                        document.getElementById("meta-relevance").textContent = relevance;
+                        document.getElementById("meta-human").textContent = human;
+                        document.getElementById("meta-planned").textContent = planned ? "Yes" : "No";
+                        document.getElementById("meta-historical").textContent = historical ? "Yes" : "No";
+                        document.getElementById("meta-age").textContent = ageDays;
+
+                        // open modal
+                        backdrop.style.display = "block";
+                    });
+                });
+            })();
+
+            // Metadata panel toggle
+            (function () {
+                var btn = document.getElementById("toggle-metadata");
+                var panel = document.getElementById("metadata-panel");
+
+                if (!btn || !panel) return;
+
+                btn.addEventListener("click", function () {
+                    if (panel.style.display === "none") {
+                        panel.style.display = "block";
+                        btn.textContent = "Hide metadata";
+                    } else {
+                        panel.style.display = "none";
+                        btn.textContent = "Show metadata";
+                    }
+                });
+            })();
+
             // Keep scroll position
             // https://stackoverflow.com/questions/17642872/refresh-page-and-keep-scroll-position
             document.addEventListener("DOMContentLoaded", function(event) { 
@@ -410,11 +634,6 @@
         {% if global_current_total is not None or container_current_total is not None %}
         <script>
             (function () {
-                // Adapted from
-                // https://stackoverflow.com/questions/40868184/how-to-use-chart-js-with-django
-                // and Chart.js basic bar sample:
-                // https://www.chartjs.org/docs/latest/samples/bar/basic.html
-
                 // Simple plugin to draw value labels on top of bars
                 const valueLabelPlugin = {
                     id: 'valueLabelPlugin',
@@ -437,7 +656,6 @@
                                 ctx.textBaseline = 'bottom';
                                 ctx.fillStyle = '#333';
 
-                                // show 8 decimal places for accuracy
                                 const v = Number(value);
                                 ctx.fillText('£' + v.toFixed(8), x, y);
                             });
@@ -552,6 +770,5 @@
             })();
         </script>
         {% endif %}
-
     </body>
 </html>
