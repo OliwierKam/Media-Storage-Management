@@ -125,4 +125,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Azure
 
-AZURE_STORAGE_ACCOUNT_URL = "https://oliwier.blob.core.windows.net"
+AZURE_STORAGE_ACCOUNT_NAME = "newoliwier"
+AZURE_STORAGE_ACCOUNT_URL = f"https://{AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
+
+AZURE_REGION = "germanywestcentral" # Currently not used, however this is used for the pricings

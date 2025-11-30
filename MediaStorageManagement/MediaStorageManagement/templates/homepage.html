@@ -2,14 +2,94 @@
 <html>
     <head>
         <title></title>
+
+        <!-- Basic styling for the page layout and table -->
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 30px;
+                background: #fafafa;
+            }
+
+            table {
+                border-collapse: collapse;
+                width: 60%;
+                background: #fff;
+            }
+
+            th, td {
+                border: 1px solid #ccc;
+                padding: 20px 15px;
+                text-align: left;
+                vertical-align: middle;
+            }
+
+            th {
+                background: #f2f2f2;
+                width: 200px;
+            }
+
+            table tbody tr:nth-child(odd) { background: #fff; }
+            table tbody tr:nth-child(even) { background: #f0f0f0; }
+
+            h3 {
+                font-size: 20px;
+                margin-bottom: 10px;
+            }
+
+            .controls { margin-bottom: 6px; }
+            .controls input[type="text"] { width: 260px; }
+            .muted { color:#666; font-size:12px; }
+
+            /* Simple modal backdrop and inner content box */
+            .modal-backdrop {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.4);
+                z-index: 1000;
+            }
+            .modal {
+                background: #fff;
+                padding: 20px;
+                margin: 60px auto;
+                width: 80%;
+                max-width: 1200px;
+                max-height: 80vh;
+                overflow: hidden;
+                border-radius: 4px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            }
+            .modal-close {
+                float: right;
+                cursor: pointer;
+                font-weight: bold;
+            }
+
+            /* Wrapper for the charts (cost charts) */
+            .chart-container {
+                margin-top: 10px;
+                margin-bottom: 20px;
+                padding: 15px;
+                background: #fff;
+                border: 1px solid #ccc;
+                width: 60%;
+            }
+        </style>
+
+        <!-- Chart.js is used to draw the bar charts for cost comparison -->
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     </head>
     <body>
 
+        <!--
+        Old form for creating a container (currently commented out, but kept for reference)
+
         <div>
-            <!-- Create container form -->
+            Create container form
             <form action="{% url 'homepage' %}" method="post">
                 {% csrf_token %}
-                <label>Create Container:</label><br>
+                <label><b>Create Container:</b></label><br>
                 <input type="text" name="container_name" placeholder="Container Name...">
                 <button type="submit" name="create_container">Create</button>
             </form>
@@ -18,22 +98,807 @@
         <br>
 
         <div>
-            <!-- Upload to container form -->
-            <form action="{% url 'homepage' %}" method="post" enctype="multipart/form-data"> <!-- enctpye required in file uploads -->
+            Upload to container form
+            <form action="{% url 'homepage' %}" method="post" enctype="multipart/form-data">
                 {% csrf_token %}
-                <label>Upload File to Container:</label><br>
-                <input type="file" name="blob_file">
+                <label><b>Upload File to Container:</b></label><br>
+                <input type="file" name="blob_file"><br>
                 <input type="text" name="container_name" placeholder="Container Name...">
                 <button type="submit" name="upload_blob">Upload</button>
+            </form>
+        </div>
+        -->
+
+        <br>
+
+        <div>
+            <!-- Simple filter form for listing blobs in a container -->
+            <form action="{% url 'homepage' %}" method="get">
+                {% csrf_token %}
+                <div class="controls">
+                    <label><b>List Blobs in Container:</b></label><br>
+                    <!-- container_name controls which container is listed -->
+                    <input type="text" name="container_name" placeholder="Container Name..."
+                           value="{{ container_name|default:'' }}">
+                </div>
+                <div class="controls">
+                    <!-- prefix lets you filter to a "folder" / prefix inside the container -->
+                    <input type="text" name="prefix" placeholder="Prefix (e.g. photos/2025/)"
+                           value="{{ prefix|default:'' }}">
+                    <span class="muted">Filter by prefix to narrow results.</span>
+                </div>
+                <div class="controls">
+                    <!-- page_size is how many blobs we ask the backend to return at once -->
+                    <input type="number" name="page_size" min="10" max="5000" step="10"
+                           placeholder="Page size"
+                           value="{{ page_size|default:'100' }}">
+                    <span class="muted">Adjust page size.</span>
+                </div>
+                <button type="submit">List</button>
             </form>
         </div>
 
         <br>
 
-        <!-- Check for result messages and print -->
+        <!-- Messages from Django (e.g. success/error notifications) -->
         {% if messages %}
-            {% for m in messages %}{{ m }}{% endfor %}
+            {% for m in messages %}{{ m }}<br>{% endfor %}
         {% endif %}
 
+        <br>
+
+        <!-- Buttons that trigger charts via GET flags -->
+        <div class="controls">
+            <!-- Global chart button (across all containers) -->
+            <form method="get" style="display:inline;">
+                <input type="hidden" name="container_name" value="{{ container_name }}">
+                <input type="hidden" name="prefix" value="{{ prefix }}">
+                <input type="hidden" name="page_size" value="{{ page_size|default:'100' }}">
+                {% if page_num %}
+                    <input type="hidden" name="p" value="{{ page_num }}">
+                {% endif %}
+                <button type="submit" name="show_global_chart" value="1">
+                    Show global cost chart (all containers)
+                </button>
+            </form>
+
+            <!-- Container-only chart (only if a container is chosen) -->
+            {% if container_name %}
+                <form method="get" style="display:inline; margin-left:10px;">
+                    <input type="hidden" name="container_name" value="{{ container_name }}">
+                    <input type="hidden" name="prefix" value="{{ prefix }}">
+                    <input type="hidden" name="page_size" value="{{ page_size|default:'100' }}">
+                    {% if page_num %}
+                        <input type="hidden" name="p" value="{{ page_num }}">
+                    {% endif %}
+                    <button type="submit" name="show_container_chart" value="1">
+                        Show container cost chart ({{ container_name }})
+                    </button>
+                </form>
+            {% endif %}
+        </div>
+
+        <!-- GLOBAL CHART (only shown if we have both current and opt totals) -->
+        {% if global_current_total is not None and global_opt_total is not None %}
+            <div class="chart-container">
+                <h3>Global estimated monthly cost (all containers)</h3>
+                <canvas id="globalCostChart" width="600" height="250"></canvas>
+            </div>
+        {% endif %}
+
+        <!-- CONTAINER CHART -->
+        {% if container_current_total is not None and container_opt_total is not None %}
+            <div class="chart-container">
+                <h3>
+                    Estimated monthly cost for container
+                    {% if container_name %}<span class="mono">{{ container_name }}</span>{% endif %}
+                </h3>
+                <canvas id="containerCostChart" width="600" height="250"></canvas>
+            </div>
+        {% endif %}
+        
+        <!-- Blob list table -->
+        {% if blob_list %}
+            {% if suggestions and suggestions|length > 0 %}
+                <div class="controls">
+                    <!-- Button that opens the bulk suggestion modal -->
+                    <button type="button" id="open-suggestions">
+                        Show suggested tier changes ({{ suggestions|length }})
+                    </button>
+                </div>
+            {% endif %}
+
+            <table>
+                <h3>
+                    Listing blobs in {{ container.name }}
+                    {% if prefix %}<span class="muted">(prefix: {{ prefix }})</span>{% endif %}
+                </h3>
+                <thead>
+                    <tr>
+                        <th>Blob Name</th>
+                        <th>Size</th>
+                        <th>Tier</th>
+                        <th>Reads (30 days)</th>
+                        <th>Reads (180 days)</th>
+                        <th>Reads (365 days)</th>
+                        <th>Est. Capacity £/mo</th>
+                        <th>Est. Read Ops £/mo</th>
+                        <th>Est. Total £/mo (Current)</th>
+                        <th>Optimal Tier</th>
+                        <th>Est. Total £/mo (Optimal)</th>
+                        <th>Potential Saving £/mo</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for blob in blob_list %}
+                        <tr>
+                            <!-- Clicking the blob name goes to a detailed blob info page -->
+                            <td><b><a href="{% url 'blob_info' container.name blob.name %}">{{ blob.name }}</a></b></td>
+                            <td>{{ blob.size|filesizeformat }}</td>
+                            <td>{{ blob.blob_tier }}</td>
+                            <td>{{ blob.access_30d }}</td>
+                            <td>{{ blob.access_180d }}</td>
+                            <td>{{ blob.access_365d }}</td>
+                            <td>£{{ blob.est_capacity_month|floatformat:8 }}</td>
+                            <td>£{{ blob.est_read_month|floatformat:8 }}</td>
+                            <td><b>£{{ blob.est_total_month|floatformat:8 }}</b></td>
+                            <td>{{ blob.opt_tier }}</td>
+                            <td>£{{ blob.opt_total_month|floatformat:8 }}</td>
+                            <td>
+                                {% if blob.opt_saving_month > 0 %}
+                                    £{{ blob.opt_saving_month|floatformat:8 }}
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </td>
+                            <td>
+                                <!-- For suggested blobs, show a button that opens the single-blob modal -->
+                                {% if blob.opt_tier and blob.opt_tier != blob.blob_tier %}
+                                    <button
+                                        type="button"
+                                        class="open-single-suggestion"
+                                        data-blob-name="{{ blob.name }}"
+                                        data-current-tier="{{ blob.blob_tier }}"
+                                        data-opt-tier="{{ blob.opt_tier }}"
+                                        data-access-365="{{ blob.access_365d }}"
+                                        data-current-total="{{ blob.est_total_month|floatformat:8 }}"
+                                        data-opt-total="{{ blob.opt_total_month|floatformat:8 }}"
+                                        data-container-name="{{ container_name }}"
+                                        data-prefix="{{ prefix }}"
+                                        data-page-size="{{ page_size }}"
+                                        data-page-num="{{ page_num }}"
+                                        data-criticality="{{ blob.criticality_index|default:0 }}"
+                                        data-relevance="{{ blob.media_relevance|default:0 }}"
+                                        data-human="{{ blob.human_trigger_index|default:0 }}"
+                                        data-planned="{{ blob.planned_activities_6m|yesno:'1,0,0' }}"
+                                        data-historical="{{ blob.has_historical_links|yesno:'1,0,0' }}"
+                                        data-age-days="{{ blob.days_since_creation_meta|default:0 }}"
+                                    >
+                                        View suggested change
+                                    </button>
+                                {% else %}
+                                    <span class="muted">No change</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <br>
+
+            <!-- Basic paging controls (prev / next) -->
+            <div class="controls">
+                {% if prev_url %}
+                    <a href="{{ prev_url }}">← Previous</a>
+                {% else %}
+                    <span class="muted">← Previous</span>
+                {% endif %}
+
+                <span class="muted" style="margin:0 10px;">
+                    Page {{ page_num }}
+                    {% if paginator %}
+                        of {{ paginator.num_pages }}
+                    {% endif %}
+                    {% if has_next is not None %}
+                        {% if not has_next %}(end){% endif %}
+                    {% endif %}
+                </span>
+
+                {% if next_url %}
+                    <a href="{{ next_url }}">Next →</a>
+                {% else %}
+                    <span class="muted">Next →</span>
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <!-- Modal for suggested changes (bulk) - shows multiple blobs at once -->
+        {% if suggestions and suggestions|length > 0 %}
+            <div id="suggestions-backdrop" class="modal-backdrop">
+                <div class="modal">
+                    <span class="modal-close" id="close-suggestions">&times;</span>
+                    <h3>Suggested tier changes (current page)</h3>
+                    <form method="post" action="{% url 'homepage' %}">
+                        {% csrf_token %}
+                        <!-- Hidden fields so when we post we return to the same list context -->
+                        <input type="hidden" name="container_name" value="{{ container_name }}">
+                        <input type="hidden" name="prefix" value="{{ prefix }}">
+                        <input type="hidden" name="page_size" value="{{ page_size }}">
+                        <input type="hidden" name="page_num" value="{{ page_num }}">
+                        <table style="width:100%; margin-top:10px;">
+                            <thead>
+                                <tr>
+                                    <!-- The select-all checkbox at the top of the first column -->
+                                    <th><input type="checkbox" id="select-all"></th>
+                                    <th>Blob Name</th>
+                                    <th>Current Tier</th>
+                                    <th>Recommended Tier</th>
+                                    <th>Reads (365 days)</th>
+                                    <th>Current Total £/mo</th>
+                                    <th>Recommended Total £/mo</th>
+                                    <th>Saving £/mo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- One row per suggested blob -->
+                                {% for blob in suggestions %}
+                                    <tr>
+                                        <td>
+                                            <!-- The value contains both name and target tier, separated by | -->
+                                            <input type="checkbox"
+                                                   name="items"
+                                                   value="{{ blob.name }}|{{ blob.opt_tier }}">
+                                        </td>
+                                        <td>{{ blob.name }}</td>
+                                        <td>{{ blob.blob_tier }}</td>
+                                        <td>{{ blob.opt_tier }}</td>
+                                        <td>{{ blob.access_365d }}</td>
+                                        <td>£{{ blob.est_total_month|floatformat:8 }}</td>
+                                        <td>£{{ blob.opt_total_month|floatformat:8 }}</td>
+                                        <td>
+                                            {% if blob.opt_saving_month > 0 %}
+                                                £{{ blob.opt_saving_month|floatformat:8 }}
+                                            {% else %}
+                                                —       
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+
+                        <div class="controls">
+                            <!-- When clicked, backend applies all selected tier changes in one go -->
+                            <button type="submit" name="apply_tier_bulk">
+                                Apply selected changes
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        {% endif %}
+
+        <!-- Modal for a single blob suggested change (opened per row) -->
+        <div id="single-suggestion-backdrop" class="modal-backdrop">
+            <div class="modal">
+                <span class="modal-close" id="close-single-suggestion">&times;</span>
+                <h3>Suggested tier change</h3>
+
+                <!-- High level info about the blob and tiers -->
+                <p>
+                    <b>Blob:</b> <span id="single-blob-name"></span><br>
+                    <b>Current tier:</b> <span id="single-current-tier"></span><br>
+                    <b>Recommended tier:</b> <span id="single-opt-tier"></span>
+                </p>
+
+                <!-- Cost before/after and saving -->
+                <p>
+                    <b>Estimated cost (current):</b>
+                    £<span id="single-current-total"></span> / month<br>
+                    <b>Estimated cost (recommended):</b>
+                    £<span id="single-opt-total"></span> / month<br>
+                    <b>Estimated saving:</b>
+                    £<span id="single-saving"></span> / month
+                </p>
+
+                <p><b>Why this change?</b></p>
+                <!-- Explanation bullets will be filled from JavaScript -->
+                <ul id="single-hints"></ul>
+
+                <!-- Button that shows or hides the metadata details below -->
+                <button type="button" id="toggle-metadata">Show metadata</button>
+
+                <!-- Extra metadata that fed into the decision, hidden by default -->
+                <div id="metadata-panel" style="display:none; margin-top:15px;">
+                    <h4>Metadata used in decision</h4>
+                    <ul>
+                        <li>Criticality: <span id="meta-criticality"></span> / 5</li>
+                        <li>Relevance: <span id="meta-relevance"></span> / 5</li>
+                        <li>Human-trigger likelihood: <span id="meta-human"></span> / 5</li>
+                        <li>Planned activity (6m): <span id="meta-planned"></span></li>
+                        <li>Historical links: <span id="meta-historical"></span></li>
+                        <li>Age (days): <span id="meta-age"></span></li>
+                    </ul>
+                </div>
+
+                <!-- When you confirm a single change, post back with the relevant fields -->
+                <form method="post" action="{% url 'homepage' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="container_name" id="single-container-name">
+                    <input type="hidden" name="prefix" id="single-prefix">
+                    <input type="hidden" name="page_size" id="single-page-size">
+                    <input type="hidden" name="page_num" id="single-page-num">
+                    <input type="hidden" name="blob_name" id="single-blob-name-input">
+                    <input type="hidden" name="target_tier" id="single-target-tier-input">
+                    <button type="submit" name="apply_tier_single">
+                        Confirm tier change
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <script>
+            /*
+            This plugin adds text labels (the "£x.xx" values) above each bar on the charts.
+            It's mostly cosmetic, but helps you the numbers without hovering each bar.
+            */
+            var valueLabelPlugin = {
+                id: "valueLabelPlugin",
+                afterDatasetsDraw: function (chart) {
+                    // ctx = drawing context for the chart canvas
+                    var ctx = chart.ctx;
+                    var datasets = chart.data.datasets;
+                    var datasetIndex = 0;
+
+                    ctx.save();
+
+                    // Go over each dataset in the chart
+                    while (datasetIndex < datasets.length) {
+                        // meta gives us the position of each bar on the chart
+                        var meta = chart.getDatasetMeta(datasetIndex);
+                        var dataPoints = meta.data;
+                        var pointIndex = 0;
+
+                        // Loop through each bar in this dataset
+                        while (pointIndex < dataPoints.length) {
+                            var barElement = dataPoints[pointIndex];
+                            var value = datasets[datasetIndex].data[pointIndex];
+
+                            // Skip null/undefined values (just in case)
+                            if (value !== null && value !== undefined) {
+                                var numericValue = Number(value);
+
+                                // Basic text styling
+                                ctx.font = "12px Arial";
+                                ctx.textAlign = "center";
+                                ctx.textBaseline = "bottom";
+                                ctx.fillStyle = "#333";
+
+                                // Draw the value a little bit above the top of the bar
+                                ctx.fillText("£" + numericValue.toFixed(8), barElement.x, barElement.y - 5);
+                            }
+
+                            pointIndex = pointIndex + 1;
+                        }
+
+                        datasetIndex = datasetIndex + 1;
+                    }
+
+                    ctx.restore();
+                }
+            };
+
+            /*
+            Handles the bulk suggestions modal.
+            This is the bigger popup that lists several blobs with checkboxes.
+            */
+            function initBulkSuggestionsModal() {
+                var openBtn = document.getElementById("open-suggestions");
+                var closeBtn = document.getElementById("close-suggestions");
+                var backdrop = document.getElementById("suggestions-backdrop");
+                var selectAll = document.getElementById("select-all");
+
+                function showModal() {
+                    if (backdrop) {
+                        backdrop.style.display = "block";
+                    }
+                }
+
+                function hideModal() {
+                    if (backdrop) {
+                        backdrop.style.display = "none";
+                    }
+                }
+
+                // When the main "Show suggested tier changes" button is clicked
+                if (openBtn && backdrop) {
+                    openBtn.addEventListener("click", function () {
+                        showModal();
+                    });
+                }
+
+                // Clicking the close icon inside the modal hides it
+                if (closeBtn && backdrop) {
+                    closeBtn.addEventListener("click", function () {
+                        hideModal();
+                    });
+                }
+
+                // Clicking outside the inner modal but inside the backdrop closes it
+                if (backdrop) {
+                    backdrop.addEventListener("click", function (event) {
+                        if (event.target === backdrop) {
+                            hideModal();
+                        }
+                    });
+                }
+
+                /*
+                "Select all" checkbox:
+                When ticked, it checks all per-row checkboxes in the suggestions table.
+                */
+                if (selectAll) {
+                    selectAll.addEventListener("change", function () {
+                        var boxes = document.querySelectorAll('input[name="items"]');
+                        var isChecked = selectAll.checked;
+                        var i = 0;
+
+                        while (i < boxes.length) {
+                            boxes[i].checked = isChecked;
+                            i = i + 1;
+                        }
+                    });
+                }
+            }
+
+            /*
+            Sets up the single-suggestion modal.
+            This is the popup that shows when you click "View suggested change" for one blob.
+            */
+            function initSingleSuggestionModal() {
+                var backdrop = document.getElementById("single-suggestion-backdrop");
+                var closeButton = document.getElementById("close-single-suggestion");
+                var triggerButtons = document.querySelectorAll(".open-single-suggestion");
+
+                // If there is no backdrop or no buttons, nothing is done
+                if (!backdrop || !triggerButtons || triggerButtons.length === 0) {
+                    return;
+                }
+
+                function openModal() {
+                    backdrop.style.display = "block";
+                }
+
+                function closeModal() {
+                    backdrop.style.display = "none";
+                }
+
+                // Close icon inside the modal
+                if (closeButton) {
+                    closeButton.addEventListener("click", function () {
+                        closeModal();
+                    });
+                }
+
+                // Clicking on the grey area outside the modal content closes it
+                backdrop.addEventListener("click", function (event) {
+                    if (event.target === backdrop) {
+                        closeModal();
+                    }
+                });
+
+                /*
+                For each "View suggested change" button in the table, I attach a click handler that fills in the modal fields based on the button's data-* attributes.
+                */
+                var i = 0;
+                while (i < triggerButtons.length) {
+                    attachSingleSuggestionHandler(triggerButtons[i], openModal);
+                    i = i + 1;
+                }
+            }
+
+            /*
+            Helper function to attach a click handler to a single button.
+            The button has a bunch of data-* attributes with everything needed to populate the modal (blob name, tiers, reads, etc).
+            */
+            function attachSingleSuggestionHandler(button, openModal) {
+                button.addEventListener("click", function () {
+                    // Basic blob info
+                    var blobName = button.getAttribute("data-blob-name") || "";
+                    var currentTier = button.getAttribute("data-current-tier") || "";
+                    var optTier = button.getAttribute("data-opt-tier") || "";
+
+                    // Access pattern and cost numbers (as strings, so parse them)
+                    var access365 = parseInt(button.getAttribute("data-access-365") || "0", 10);
+                    var currentTotal = parseFloat(button.getAttribute("data-current-total") || "0");
+                    var optTotal = parseFloat(button.getAttribute("data-opt-total") || "0");
+
+                    // Context fields used to return to the same list view after applying
+                    var containerName = button.getAttribute("data-container-name") || "";
+                    var prefix = button.getAttribute("data-prefix") || "";
+                    var pageSize = button.getAttribute("data-page-size") || "";
+                    var pageNum = button.getAttribute("data-page-num") || "";
+
+                    // Metadata values (all optional, so default them if missing)
+                    var criticality = parseInt(button.getAttribute("data-criticality") || "0", 10);
+                    var relevance = parseInt(button.getAttribute("data-relevance") || "0", 10);
+                    var humanScore = parseInt(button.getAttribute("data-human") || "0", 10);
+                    var planned = button.getAttribute("data-planned") === "1";
+                    var historical = button.getAttribute("data-historical") === "1";
+                    var ageDays = parseInt(button.getAttribute("data-age-days") || "0", 10);
+
+                    // Simple difference between current and optimal monthly estimates
+                    var saving = currentTotal - optTotal;
+
+                    // Fill the visible pieces of the modal with the values just read
+                    document.getElementById("single-blob-name").textContent = blobName;
+                    document.getElementById("single-current-tier").textContent = currentTier;
+                    document.getElementById("single-opt-tier").textContent = optTier;
+                    document.getElementById("single-current-total").textContent = currentTotal.toFixed(8);
+                    document.getElementById("single-opt-total").textContent = optTotal.toFixed(8);
+                    document.getElementById("single-saving").textContent = saving.toFixed(8);
+
+                    // Fill the hidden form fields so the backend knows what to change
+                    document.getElementById("single-container-name").value = containerName;
+                    document.getElementById("single-prefix").value = prefix;
+                    document.getElementById("single-page-size").value = pageSize;
+                    document.getElementById("single-page-num").value = pageNum;
+                    document.getElementById("single-blob-name-input").value = blobName;
+                    document.getElementById("single-target-tier-input").value = optTier;
+
+                    /*
+                    Build a set of 2-3 short explanation bullets.
+                    The idea is to keep it reasonably readable while still telling the user why the suggested tier makes sense.
+                     */
+                    var hintsList = document.getElementById("single-hints");
+                    hintsList.innerHTML = "";
+
+                    // 1) Cost explanation
+                    var liCost = document.createElement("li");
+                    if (saving > 0) {
+                        liCost.textContent = "This change reduces the estimated monthly cost.";
+                    } else {
+                        liCost.textContent = "The cost difference is small; this suggestion is based mostly on usage and metadata.";
+                    }
+                    hintsList.appendChild(liCost);
+
+                    // 2) Usage explanation (based on reads in the last 365 days)
+                    var liUsage = document.createElement("li");
+                    if (access365 === 0) {
+                        liUsage.textContent = "This blob has not been read in the last year, so a cooler tier is suggested.";
+                    } else if (access365 < 50) {
+                        liUsage.textContent = "Read volume is relatively low over the last year.";
+                    } else {
+                        liUsage.textContent = "This blob is accessed often, so it stays in a warmer tier.";
+                    }
+                    hintsList.appendChild(liUsage);
+
+                    // 3) Metadata explanation (criticality, relevance, age, planned use, etc.)
+                    var liMeta = document.createElement("li");
+                    if (planned) {
+                        liMeta.textContent = "There is planned activity for this blob in the next 6 months.";
+                    } else if (criticality >= 4 || humanScore >= 3) {
+                        liMeta.textContent = "The blob is considered important or likely to be opened directly by users.";
+                    } else if (historical && ageDays > 180) {
+                        liMeta.textContent = "It is mostly historical data and fairly old, so long-term storage is suitable.";
+                    } else {
+                        liMeta.textContent = "Metadata suggests normal usage, so this is a balanced default tier.";
+                    }
+                    hintsList.appendChild(liMeta);
+
+                    /*
+                    Fill the metadata details in the bottom panel.
+                    These show raw numbers for people who want more detail.
+                    */
+                    document.getElementById("meta-criticality").textContent = criticality;
+                    document.getElementById("meta-relevance").textContent = relevance;
+                    document.getElementById("meta-human").textContent = humanScore;
+                    document.getElementById("meta-planned").textContent = planned ? "Yes" : "No";
+                    document.getElementById("meta-historical").textContent = historical ? "Yes" : "No";
+                    document.getElementById("meta-age").textContent = ageDays;
+
+                    // Finally, open the modal
+                    openModal();
+                });
+            }
+
+            /*
+            Simple toggle for showing/hiding the metadata panel in the single blob modal.
+            */
+            function initMetadataToggle() {
+                var button = document.getElementById("toggle-metadata");
+                var panel = document.getElementById("metadata-panel");
+
+                if (!button || !panel) {
+                    return;
+                }
+
+                button.addEventListener("click", function () {
+                    // If display is blank or "none", treat it as hidden
+                    var isHidden = panel.style.display === "none" || panel.style.display === "";
+
+                    if (isHidden) {
+                        panel.style.display = "block";
+                        button.textContent = "Hide metadata";
+                    } else {
+                        panel.style.display = "none";
+                        button.textContent = "Show metadata";
+                    }
+                });
+            }
+
+            /*
+            These two functions store and restore the scroll position.
+            This makes paging or refreshing less annoying, because the page
+            doesn't jump back to the very top.
+            */
+            function saveScrollPosition() {
+                try {
+                    localStorage.setItem("blobPageScroll", window.scrollY);
+                } catch (e) {
+                    // If localStorage is blocked (e.g. in private mode), just ignore it.
+                }
+            }
+
+            function restoreScrollPosition() {
+                try {
+                    var savedPosition = localStorage.getItem("blobPageScroll");
+                    if (savedPosition) {
+                        var y = parseInt(savedPosition, 10);
+                        if (!isNaN(y)) {
+                            window.scrollTo(0, y);
+                        }
+                    }
+                } catch (e) {
+                    // Again, if localStorage fails, nothing serious happens.
+                }
+            }
+
+            /*
+            Sets up charts only if the server has provided total values.
+            The Django template conditions surround the calls inside this function.
+            */
+            function initCharts() {
+                {% if global_current_total is not None and global_opt_total is not None %}
+                initGlobalCostChart();
+                {% endif %}
+                {% if container_current_total is not None and container_opt_total is not None %}
+                initContainerCostChart();
+                {% endif %}
+            }
+
+            /*
+            Builds the global bar chart (all containers combined).
+            Uses Chart.js with two bars: current vs optimal.
+            */
+            function initGlobalCostChart() {
+                var canvas = document.getElementById("globalCostChart");
+                if (!canvas) {
+                    return;
+                }
+
+                // Values are injected by Django as plain numbers
+                var current = {{ global_current_total|default:"0" }};
+                var optimal = {{ global_opt_total|default:"0" }};
+                var ctx = canvas.getContext("2d");
+
+                new Chart(ctx, {
+                    type: "bar",
+                    data: {
+                        labels: ["All blobs (all containers)"],
+                        datasets: [
+                            {
+                                label: "Current total (£/mo)",
+                                data: [current]
+                            },
+                            {
+                                label: "Optimal total (£/mo)",
+                                data: [optimal]
+                            }
+                        ]
+                    },
+                    plugins: [valueLabelPlugin],
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: "£ per month"
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function (context) {
+                                        var v = context.parsed.y || 0;
+                                        return context.dataset.label + ": £" + v.toFixed(8);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            /*
+            Container-specific chart.
+            Very similar to the global one, but labels the bar as "Container".
+            */
+            function initContainerCostChart() {
+                var canvas = document.getElementById("containerCostChart");
+                if (!canvas) {
+                    return;
+                }
+
+                var current = {{ container_current_total|default:"0" }};
+                var optimal = {{ container_opt_total|default:"0" }};
+                var ctx = canvas.getContext("2d");
+
+                new Chart(ctx, {
+                    type: "bar",
+                    data: {
+                        labels: ["Container"],
+                        datasets: [
+                            {
+                                label: "Current total (£/mo)",
+                                data: [current]
+                            },
+                            {
+                                label: "Optimal total (£/mo)",
+                                data: [optimal]
+                            }
+                        ]
+                    },
+                    plugins: [valueLabelPlugin],
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: "£ per month"
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function (context) {
+                                        var v = context.parsed.y || 0;
+                                        return context.dataset.label + ": £" + v.toFixed(8);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            /*
+            Kick everything off once the DOM is fully loaded:
+             - set up modals
+             - set up metadata toggle
+             - restore scroll position
+             - initialise charts
+             */
+            document.addEventListener("DOMContentLoaded", function () {
+                initBulkSuggestionsModal();
+                initSingleSuggestionModal();
+                initMetadataToggle();
+                restoreScrollPosition();
+                initCharts();
+            });
+
+            // Before leaving the page (navigation/refresh), remember the scroll position.
+            window.addEventListener("beforeunload", function () {
+                saveScrollPosition();
+            });
+        </script>
     </body>
 </html>

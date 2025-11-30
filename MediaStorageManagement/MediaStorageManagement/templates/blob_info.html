@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Blob Details</title>
+
+        <style>
+            /* Basic page styling to keep things readable */
+            body {
+                font-family: Arial, sans-serif;
+                margin: 30px;
+                background: #fafafa;
+            }
+
+            /* Main table for the blob details */
+            table {
+                border-collapse: collapse;
+                background: #fff;
+                width: 70%;
+            }
+
+            /* Cells share border and padding rules */
+            th, td {
+                border: 1px solid #ddd;
+                padding: 10px 14px;
+                text-align: left;
+                vertical-align: top;
+            }
+
+            /* Header cells: slightly different background and fixed width */
+            th {
+                background: #f5f5f5;
+                width: 260px;
+            }
+
+            h2 {
+                margin-bottom: 8px;
+            }
+
+            /* Smaller, lighter text for secondary information */
+            .small {
+                color: #666;
+                font-size: 12px;
+            }
+
+            /* "mono" is used for things like IDs, names, byte sizes, etc. */
+            .mono {
+                font-family: Consolas, Menlo, monospace;
+            }
+        </style>
+    </head>
+
+    <body>
+
+        <!-- Page heading: show the blob name in a monospace font -->
+        <h2>Blob: <span class="mono">{{ blob_name }}</span></h2>
+
+        <!-- Small line showing which container this blob belongs to -->
+        <div class="small">
+            Container: <span class="mono">{{ container_name }}</span>
+        </div>
+
+        <br>
+
+        <!-- Main details table -->
+        <table>
+
+            <!-- Identity section: basic info -->
+            <tr><th colspan="2">Identity</th></tr>
+
+            <tr>
+                <th>Container</th>
+                <!-- container_name is passed in from the Django view -->
+                <td class="mono">{{ container_name }}</td>
+            </tr>
+
+            <tr>
+                <th>Blob name</th>
+                <!-- blob_name is the full path/name of the blob -->
+                <td class="mono">{{ blob_name }}</td>
+            </tr>
+
+            <!-- Timestamps section: created/modified dates from the blob metadata -->
+            <tr><th colspan="2">Timestamps</th></tr>
+
+            <tr>
+                <th>Last modified</th>
+                <!-- last_modified -->
+                <td>{{ last_modified|date:"d-m-Y H:i:s"|default:"—" }}</td>
+            </tr>
+
+            <tr>
+                <th>Created on</th>
+                <!-- creation_time -->
+                <td>{{ creation_time|date:"d-m-Y H:i:s"|default:"—" }}</td>
+            </tr>
+
+            <!-- Mock / sampled access statistics, mainly used by the pricing logic -->
+            <tr><th colspan="2">Reads (Mocked Usage)</th></tr>
+
+            <tr>
+                <th>Reads (last 30 days)</th>
+                <!-- access_30d is a simple integer count -->
+                <td class="mono">{{ access_30d }}</td>
+            </tr>
+
+            <tr>
+                <th>Reads (last 180 days)</th>
+                <td class="mono">{{ access_180d }}</td>
+            </tr>
+
+            <tr>
+                <th>Reads (last 365 days)</th>
+                <td class="mono">{{ access_365d }}</td>
+            </tr>
+
+            <!-- Size & Tier information: what Azure says about the blob, and how we interpret it -->
+            <tr><th colspan="2">Size & Tier</th></tr>
+
+            <tr>
+                <th>Size (bytes)</th>
+                <!-- Raw byte size straight from the blob properties -->
+                <td class="mono">{{ size_bytes }}</td>
+            </tr>
+
+            <tr>
+                <th>Size (GB)</th>
+                <!-- size_gb is calculated server-side; we format it to 8 decimal places -->
+                <td class="mono">{{ size_gb|floatformat:8 }}</td>
+            </tr>
+
+            <tr>
+                <th>Tier (raw from Azure)</th>
+                <!-- tier_raw is whatever Azure returns (e.g. "Hot", "Cool", "Archive", etc.) -->
+                <td class="mono">{{ tier_raw }}</td>
+            </tr>
+
+            <tr>
+                <th>Tier (normalized)</th>
+                <!-- tier_norm is cleaned-up / standardised tier name used in pricing logic -->
+                <td class="mono">{{ tier_norm }}</td>
+            </tr>
+
+            <!-- Pricing Inputs: just the main unit price that feeds the cost estimate -->
+            <tr><th colspan="2">Pricing Inputs</th></tr>
+
+            <tr>
+                <th>Unit price (£ / GB·month)</th>
+                <!-- unit_price: price we use when multiplying size_gb * unit_price -->
+                <td class="mono">£{{ unit_price }}</td>
+            </tr>
+
+            <!-- Estimate section: how much this blob costs per month in its current tier -->
+            <tr><th colspan="2">Estimates</th></tr>
+
+            <tr>
+                <th>Est. Capacity (£/mo)</th>
+                <!-- est_capacity_month: capacity-only estimate (storage) -->
+                <td class="mono">£{{ est_capacity_month|floatformat:8 }}</td>
+            </tr>
+
+            <tr>
+                <th>Est. Read Ops (£/mo)</th>
+                <!-- est_read_month: read-operation cost based on mock/sampled read counts -->
+                <td class="mono">£{{ est_read_month|floatformat:8 }}</td>
+            </tr>
+
+            <tr>
+                <!-- Full total for the current tier (capacity + reads) -->
+                <th><b>Est. Total (£/mo) – Current Tier ({{ tier_norm }})</b></th>
+                <td class="mono"><b>£{{ est_total_month|floatformat:8 }}</b></td>
+            </tr>
+
+            <!-- Optimal tier suggestion: this reflects the output from the optimisation logic -->
+            <tr><th colspan="2">Optimal Tier Suggestion</th></tr>
+
+            <tr>
+                <th>Recommended tier</th>
+                <!-- opt_tier is the recommended storage tier (Hot/Cool/Cold/Archive) -->
+                <td class="mono">{{ opt_tier }}</td>
+            </tr>
+
+            <tr>
+                <th>Est. Total (£/mo) in recommended tier</th>
+                <!-- opt_total_month: what it would cost if we actually moved the blob there -->
+                <td class="mono">£{{ opt_total_month|floatformat:8 }}</td>
+            </tr>
+
+            <tr>
+                <th>Potential saving (£/mo)</th>
+                <td class="mono">
+                    <!-- If the saving is positive, show it; otherwise show a dash (no saving). -->
+                    {% if opt_saving_month > 0 %}
+                        £{{ opt_saving_month|floatformat:8 }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+            </tr>
+
+        </table>
+
+        <br>
+
+        <!-- Simple "go back" button that uses browser history -->
+        <button onclick="window.history.back()">Back</button>
+
+    </body>
+</html>
